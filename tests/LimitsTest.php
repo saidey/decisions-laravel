@@ -28,9 +28,9 @@ class LimitsTest extends TestCase
 
     public function test_context_json_is_bounded_after_redaction_and_encoding(): void
     {
-        $context = array_fill(0, 4, str_repeat('x', 8192));
+        $context = array_fill(0, 4, str_repeat('x ', 4096));
         $context[3] = '';
-        $context[3] = str_repeat('x', 32768 - strlen(json_encode($context)));
+        $context[3] = substr(str_repeat('x ', 4096), 0, 32768 - strlen(json_encode($context)));
         Log::info('at limit', $context);
         $context[3] .= 'x';
         Log::info('over limit', $context);

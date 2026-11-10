@@ -34,6 +34,10 @@ class Redactor
                 return [];
             }
 
+            if (($record['t'] ?? null) === 'cache' && isset($record['key'])) {
+                $record['key'] = $this->redactCacheKey($record['key'], $record['store'] ?? config('cache.default'));
+            }
+
             $bytes = 0;
 
             return $this->redactArray($record, 0, $bytes, ($record['t'] ?? null) === 'log');
@@ -66,7 +70,7 @@ class Redactor
         unset($segment);
         $path = $authority.implode('/', $segments);
         if ($query !== null) {
-            $fields = [...$this->fields, 'key', 'signature', 'sig', 'access_token'];
+            $fields = [...$this->fields, 'key', 'signature', 'expires', 'token', 'x-amz-signature', 'x-amz-credential', 'sig', 'access_token'];
             $parameters = explode('&', $query);
             foreach ($parameters as &$parameter) {
                 $key = explode('=', $parameter, 2)[0];
@@ -92,6 +96,11 @@ class Redactor
 
     public function scrubValue(string $value): string
     {
+        $url = parse_url($value);
+        if (is_array($url) && isset($url['scheme'], $url['host'])) {
+            $value = $this->redactUrl($value);
+        }
+
         $fields = implode('|', array_map(fn ($field) => preg_quote($field, '~'), $this->fields));
         $sensitive = 'password|secret|token|key|credential';
         $quotedField = '(?:'.$fields.'|[^\x22\x27\r\n]*(?:'.$sensitive.')[^\x22\x27\r\n]*)';
@@ -103,6 +112,8 @@ class Redactor
             '\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b',
             '[a-z0-9.!#$%&\x27*+/=?^_`{|}\~-]+@[a-z0-9.-]+\.[a-z]{2,}',
             '(?<![a-z0-9+/_-])[a-z0-9+/_-]{32,}={0,2}(?![a-z0-9+/_-])',
+            // Phone-shaped digit runs (7+ digits, single space/dash separators). Not ISO dates or digits inside identifiers.
+            '(?<![\w.-])(?!\d{4}-\d{2}-\d{2}(?!\d))\+?\d(?:[ -]?\d){6,}(?![\w-]|\.\d)',
         ];
 
         return preg_replace_callback('~'.implode('|', $patterns).'~i', fn ($match) => isset($match['prefix']) && $match['prefix'] !== ''
@@ -110,7 +121,34 @@ class Redactor
             : '[REDACTED]', $value) ?? '[REDACTED]';
     }
 
-    private function redactArray(array $values, int $depth, int &$bytes, bool $log = false, bool $source = false): array
+    private function redactCacheKey(string $key, ?string $store): string
+    {
+        $sessionStore = config('session.store');
+        if (! $sessionStore && in_array(config('session.driver'), ['apc', 'memcached', 'redis', 'dynamodb'], true)) {
+            $sessionStore = config('session.driver');
+        }
+        $session = ($sessionStore !== null && $store === $sessionStore) || preg_match('/^[a-z0-9]{40}$/iD', $key);
+        foreach (['session.cookie', 'session.prefix'] as $option) {
+            $prefix = config($option);
+            $session = $session || (is_string($prefix) && $prefix !== '' && str_starts_with($key, $prefix));
+        }
+        if (($this->config['capture']['cache_keys'] ?? false) && ! $session) {
+            return $this->scrubValue($key);
+        }
+
+        $salt = (string) config('app.key');
+        if ($salt === '') {
+            return '[REDACTED]';
+        }
+        $prefix = ! $session && str_contains($key, ':') ? explode(':', $key, 2)[0] : '';
+        if ($this->scrubValue($prefix) !== $prefix) {
+            $prefix = '';
+        }
+
+        return ($prefix !== '' ? $prefix.':' : '').substr(hash_hmac('sha256', $key, $salt), 0, 12);
+    }
+
+    private function redactArray(array $values, int $depth, int &$bytes, bool $log = false, bool $scrubValues = false): array
     {
         if ($depth > 10) {
             throw new RuntimeException('Monitoring record exceeds the redaction depth limit.');
@@ -130,6 +168,7 @@ class Redactor
             if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)) {
                 $value = '[REDACTED]';
             } else {
+                $scrub = $scrubValues || in_array($name, ['context', 'source'], true);
                 if (is_object($value)) {
                     $value = match (true) {
                         $value instanceof JsonSerializable => $value->jsonSerialize(),
@@ -138,16 +177,16 @@ class Redactor
                     };
                     // Serializers can return another object, including themselves.
                     if (is_object($value)) {
-                        $value = $this->redactArray(['value' => $value], $depth + 1, $bytes)['value'];
+                        $value = $this->redactArray(['value' => $value], $depth + 1, $bytes, false, $scrub)['value'];
                     }
                 }
                 if ($name === 'user' && is_array($value) && ! ($this->config['user_details'] ?? false)) {
                     $value = array_intersect_key($value, ['id' => true]);
                 }
                 if (is_array($value)) {
-                    $value = $this->redactArray($value, $depth + 1, $bytes, false, $source || $name === 'source');
+                    $value = $this->redactArray($value, $depth + 1, $bytes, false, $scrub);
                 } elseif (is_string($value)) {
-                    if ($name === 'message' || $source) {
+                    if ($name === 'message' || $scrub) {
                         $value = $this->scrubValue($value);
                     }
                     $value = mb_strcut($value, 0, $log && $depth === 0 && $name === 'message' ? 16384 : 8192, 'UTF-8');

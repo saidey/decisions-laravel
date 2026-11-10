@@ -38,6 +38,7 @@ return [
     ],
 
     'capture' => [
+        'cache_keys' => env('DECISIONS_CAPTURE_CACHE_KEYS', false),
         'payloads' => false,
         'bindings' => false,
         'source' => env('DECISIONS_CAPTURE_SOURCE', false),

@@ -24,6 +24,7 @@ Optional configuration:
 | `DECISIONS_ENVIRONMENT` | `app.env` | Environment label. |
 | `DECISIONS_DEPLOY` | Unset | Deployment identifier, such as a commit SHA. |
 | `DECISIONS_USER_DETAILS` | `false` | Allow user names and email addresses alongside IDs. |
+| `DECISIONS_CAPTURE_CACHE_KEYS` | `false` | Capture scrubbed cache keys instead of hashed keys; session keys remain hashed. |
 
 Publish the configuration to adjust privacy, buffer size, sampling, and ignore lists:
 
@@ -50,7 +51,9 @@ In the published `config/decisions.php`, each `sample.{type}` is a probability f
 
 Path, command and job patterns support `*`. Paths match without the query string, with or without a leading slash. Ignoring a request, command or processing job suppresses its trace, including logs, queries and exceptions. An ignored synchronous job suppresses only that job's records and restores its parent request or command trace afterward. Jobs inside ignored requests remain ignored. Ignored exception classes also match subclasses; they suppress exception records only.
 
-Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). Query exceptions and logs with query exception context send SQL with placeholders and the driver error code; already stringified database errors without exception context send a generic redacted summary. Interpolated error messages require `capture.bindings=true`. Exception and log messages always mask email addresses, bearer tokens, JWT-shaped values, long hex/base64 strings (32+ characters), and credential pairs such as `password=…` and `token=…`.
+Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). Query exceptions and logs with query exception context send SQL with placeholders and the driver error code; already stringified database errors without exception context send a generic redacted summary. Interpolated error messages require `capture.bindings=true`. Exception and log messages and all nested context strings mask email addresses, phone-shaped values (7+ digits, including spaces or dashes), bearer tokens, JWT-shaped values, long hex/base64 strings (32+ characters), and credential pairs such as `password=…` and `token=…`. Numeric values remain numeric. Absolute URLs in these strings also have credentials, sensitive query parameters (including signed URL signatures and expiry), and secret path segments redacted.
+
+Cache keys are private by default (`capture.cache_keys=false`). Records keep only a scrub-safe prefix before the first `:` and the first 12 hex characters of an HMAC-SHA256 of the full key, salted with `app.key`, such as `phone-code:3f9a1c0b2d4e`. Grouping stays stable within an app until its key changes. If `app.key` is unset, keys are fully redacted. Set `DECISIONS_CAPTURE_CACHE_KEYS=true` to capture keys with value scrubbing applied. Keys from the configured session cache store, 40-character alphanumeric session-shaped keys, and keys beginning with the configured session cookie or prefix always use the hashed form without a prefix.
 
 Matched incoming requests send the route template as both `route` and `path`, without actual route parameters. Unmatched incoming paths and outgoing URL paths replace secret-shaped segments (including 24+ character tokens and Telegram bot credentials) with `{redacted}`. URL user credentials and sensitive query parameters are redacted. Scheduled inventory and run records send only the Artisan command name, executable basename, or explicit shell/callback task description; arguments and options are excluded.
 
