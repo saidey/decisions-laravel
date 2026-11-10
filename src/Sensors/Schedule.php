@@ -11,7 +11,7 @@ class Schedule
 {
     private bool $reporting = false;
 
-    public function __construct(private Recorder $recorder) {}
+    public function __construct(private Recorder $recorder, private TaskCommand $commands) {}
 
     public function handle(CommandStarting $event): void
     {
@@ -36,7 +36,7 @@ class Schedule
             $tasks = [];
             foreach (app(LaravelSchedule::class)->events() as $task) {
                 $tasks[] = [
-                    'command' => $task->command ?? $task->getSummaryForDisplay(),
+                    'command' => $this->commands->name($task),
                     'cron' => $task->expression,
                     'timezone' => $task->timezone instanceof \DateTimeZone ? $task->timezone->getName() : ($task->timezone ?? config('app.timezone', 'UTC')),
                 ];

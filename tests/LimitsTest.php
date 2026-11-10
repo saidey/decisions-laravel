@@ -16,7 +16,7 @@ class LimitsTest extends TestCase
 
     public function test_strings_and_log_messages_have_byte_limits_without_breaking_utf8(): void
     {
-        Log::info(str_repeat('x', 20000), ['safe' => str_repeat('é', 10000)]);
+        Log::info(str_repeat('word ', 4000), ['safe' => str_repeat('é', 10000)]);
         app(Recorder::class)->record(['t' => 'query', 'sql' => str_repeat('x', 10000)]);
         app(Recorder::class)->flush();
         $records = $this->batches()[0]['records'];

@@ -10,7 +10,7 @@ use Throwable;
 
 class ScheduledTasks
 {
-    public function __construct(private Recorder $recorder) {}
+    public function __construct(private Recorder $recorder, private TaskCommand $commands) {}
 
     public function handle(ScheduledTaskFinished|ScheduledTaskFailed|ScheduledBackgroundTaskFinished $event): void
     {
@@ -22,7 +22,7 @@ class ScheduledTasks
             $this->recorder->record([
                 't' => 'task',
                 'ms' => (float) ($event->runtime ?? 0) * 1000,
-                'command' => $event->task->command ?? $event->task->getSummaryForDisplay(),
+                'command' => $this->commands->name($event->task),
                 'cron' => $event->task->expression,
                 'status' => $event instanceof ScheduledTaskFailed || ($event->task->exitCode ?? 0) !== 0 ? 'failed' : 'ok',
             ]);

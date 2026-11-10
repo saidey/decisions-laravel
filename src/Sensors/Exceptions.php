@@ -3,6 +3,7 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use DecisionsAi\Laravel\Redactor;
 use SplFileObject;
 use Throwable;
 use WeakMap;
@@ -15,7 +16,7 @@ class Exceptions
 
     private string $trace = '';
 
-    public function __construct(private Recorder $recorder, private Users $users) {}
+    public function __construct(private Recorder $recorder, private Users $users, private Redactor $redactor) {}
 
     public function handle(Throwable $exception): void
     {
@@ -60,7 +61,7 @@ class Exceptions
             $this->recorder->record([
                 't' => 'exception',
                 'class' => get_class($exception),
-                'message' => $exception->getMessage(),
+                'message' => $this->redactor->exceptionMessage($exception, (bool) config('decisions.capture.bindings', false)),
                 'file' => str_starts_with($file, $base) ? substr($file, strlen($base)) : $file,
                 'line' => $exception->getLine(),
                 'trace_frames' => $frames,
@@ -75,9 +76,13 @@ class Exceptions
     {
         try {
             $path = realpath($file);
-            $base = rtrim(base_path(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
-            $relative = $path !== false && str_starts_with($path, $base) ? substr($path, strlen($base)) : $path;
-            if ($path === false || $line < 1 || str_contains('/'.str_replace('\\', '/', $relative), '/vendor/')) {
+            $basePath = realpath(base_path());
+            if ($path === false || $basePath === false) {
+                return null;
+            }
+            $base = rtrim($basePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+            $relative = str_starts_with($path, $base) ? substr($path, strlen($base)) : $path;
+            if (! str_starts_with($path, $base) || $line < 1 || str_contains('/'.str_replace('\\', '/', $relative), '/vendor/')) {
                 return null;
             }
             if (! array_key_exists($path, $this->sources)) {
@@ -97,7 +102,7 @@ class Exceptions
             $source->seek(max(0, $line - 6));
             $lines = [];
             for ($number = max(1, $line - 5); $number <= $line + 5 && ! $source->eof(); $number++) {
-                $lines[$number] = mb_strcut(rtrim($source->current(), "\r\n"), 0, 8192, 'UTF-8');
+                $lines[$number] = mb_strcut($this->redactor->scrubValue(rtrim($source->current(), "\r\n")), 0, 8192, 'UTF-8');
                 $source->next();
             }
 

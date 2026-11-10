@@ -217,7 +217,7 @@ class ClientReviewTest extends TestCase
         $this->assertCount(1, $records);
         $this->assertSame(7, $task->exitCode);
         $this->assertSame('failed', $records[0]['status']);
-        $this->assertSame('exit 7', $records[0]['command']);
+        $this->assertSame('exit', $records[0]['command']);
         $this->assertSame(0.0, $records[0]['ms']);
     }
 

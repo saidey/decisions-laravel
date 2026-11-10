@@ -1,6 +1,7 @@
 {
     "name": "decisions-ai/laravel",
     "description": "A Laravel client for decisions.site monitoring.",
+    "license": "MIT",
     "type": "library",
     "require": {
         "php": "^8.2",

@@ -4,6 +4,7 @@ namespace DecisionsAi\Laravel;
 
 use Illuminate\Support\Str;
 use Throwable;
+use WeakMap;
 
 class Recorder
 {
@@ -20,6 +21,8 @@ class Recorder
     private bool $ignored = false;
 
     private ?string $traceType = null;
+
+    private ?WeakMap $jobTraces = null;
 
     private array $metadata = [];
 
@@ -156,6 +159,25 @@ class Recorder
     public function traceId(): string
     {
         return $this->trace;
+    }
+
+    public function startJobTrace(object $job, ?string $name): void
+    {
+        $this->jobTraces ??= new WeakMap;
+        $parent = [$this->trace, $this->traceType, $this->ignoreCurrentTrace()];
+        $this->startTrace('job', $name);
+        $this->ignored = $this->ignored || $parent[2];
+        $this->jobTraces[$job] = $parent;
+    }
+
+    public function finishJobTrace(object $job): void
+    {
+        if ($this->jobTraces === null || ! isset($this->jobTraces[$job])) {
+            return;
+        }
+        $this->flush();
+        [$this->trace, $this->traceType, $this->ignored] = $this->jobTraces[$job];
+        unset($this->jobTraces[$job]);
     }
 
     private function matchesIgnore(string $type, string $name): bool

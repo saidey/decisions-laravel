@@ -73,9 +73,13 @@ class DecisionsServiceProvider extends ServiceProvider
             };
             $start = function ($event) {
                 try {
+                    if ($event instanceof JobProcessing) {
+                        $this->app->make(Recorder::class)->startJobTrace($event->job, $event->job->resolveName());
+
+                        return;
+                    }
                     [$type, $name] = match (true) {
                         $event instanceof CommandStarting => ['command', $event->command],
-                        $event instanceof JobProcessing => ['job', $event->job->resolveName()],
                         default => ['request', isset($event->request) ? $event->request->getPathInfo() : null],
                     };
                     $this->app->make(Recorder::class)->startTrace($type, $name);
@@ -151,7 +155,15 @@ class DecisionsServiceProvider extends ServiceProvider
             });
 
             $this->app->terminating($flush);
-            foreach ([JobProcessed::class, JobFailed::class, JobReleasedAfterException::class, CommandFinished::class, 'Laravel\\Octane\\Events\\RequestTerminated'] as $event) {
+            foreach ([JobProcessed::class, JobFailed::class, JobReleasedAfterException::class] as $event) {
+                $this->app['events']->listen($event, function ($event) {
+                    try {
+                        $this->app->make(Recorder::class)->finishJobTrace($event->job);
+                    } catch (Throwable) {
+                    }
+                });
+            }
+            foreach ([CommandFinished::class, 'Laravel\\Octane\\Events\\RequestTerminated'] as $event) {
                 $this->app['events']->listen($event, $flush);
             }
         } catch (Throwable) {

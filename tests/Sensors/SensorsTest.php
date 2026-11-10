@@ -82,7 +82,7 @@ class SensorsTest extends TestCase
         $record = $this->records('request')[0];
         $this->assertShape('request', $record);
         $this->assertSame('/orders/{order}', $record['route']);
-        $this->assertSame('/orders/9', $record['path']);
+        $this->assertSame('/orders/{order}', $record['path']);
         $this->assertSame(201, $record['status']);
         $this->assertSame('42', $record['user']);
         $this->assertGreaterThanOrEqual(0, $record['ms']);

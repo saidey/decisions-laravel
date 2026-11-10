@@ -22,7 +22,7 @@ class Requests
                 'ms' => max(0, (microtime(true) - $started) * 1000),
                 'method' => $request->method(),
                 'route' => $route ? '/'.ltrim($route->uri(), '/') : null,
-                'path' => $this->redactor->redactUrl($request->getPathInfo()),
+                'path' => $route ? '/'.ltrim($route->uri(), '/') : $this->redactor->redactUrl($request->getPathInfo()),
                 'status' => $event->response->getStatusCode(),
                 ...$this->users->identity(),
             ]);
