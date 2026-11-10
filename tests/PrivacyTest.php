@@ -6,6 +6,7 @@ use DecisionsAi\Laravel\Recorder;
 use DecisionsAi\Laravel\Redactor;
 use Illuminate\Session\CacheBasedSessionHandler;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Monolog\Handler\TestHandler;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -258,5 +259,19 @@ class PrivacyTest extends TestCase
         $this->assertSame('call [REDACTED] now', $redactor->scrubValue('call +960 777-1234 now'));
         $this->assertSame('on 2026-11-10 at 19:44', $redactor->scrubValue('on 2026-11-10 at 19:44'));
         $this->assertSame('job order-12345678 and v1.2345678', $redactor->scrubValue('job order-12345678 and v1.2345678'));
+    }
+
+    public function test_url_fragments_are_never_exported(): void
+    {
+        $redactor = app(Redactor::class);
+        $this->assertSame('https://files.example/img.png?X-Amz-Signature=[redacted]', $redactor->redactUrl('https://files.example/img.png?X-Amz-Signature=abc#private-fragment'));
+        $this->assertSame('https://app.test/cb', $redactor->scrubValue('https://app.test/cb#access_token=secretvalue'));
+        Http::fake(['files.example/*' => Http::response('ok')]);
+        Http::get('https://files.example/img.png?X-Amz-Signature=abc#private-fragment');
+        [$records, $json] = $this->wire();
+        $this->assertStringNotContainsString('private-fragment', $json);
+        foreach ($records as $record) {
+            $this->assertStringNotContainsString('#', (string) ($record['url'] ?? ''));
+        }
     }
 }

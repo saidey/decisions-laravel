@@ -49,7 +49,7 @@ class Redactor
     public function redactUrl(string $url): string
     {
         $url = preg_replace('~^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@~i', '$1', $url);
-        [$url, $fragment] = array_pad(explode('#', $url, 2), 2, null);
+        $url = explode('#', $url, 2)[0];
         [$path, $query] = array_pad(explode('?', $url, 2), 2, null);
         $authority = '';
         if (preg_match('~^((?:[a-z][a-z0-9+.-]*:)?//[^/]*)(.*)$~i', $path, $parts)) {
@@ -82,7 +82,8 @@ class Redactor
             $path .= '?'.implode('&', $parameters);
         }
 
-        return $path.($fragment !== null ? '#'.$fragment : '');
+        // Fragments never reach a server and can carry tokens (implicit-flow access_token, magic links).
+        return $path;
     }
 
     public function exceptionMessage(Throwable $exception, bool $bindings = false): string

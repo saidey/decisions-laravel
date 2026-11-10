@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Drop URL fragments from every exported URL (outgoing requests, request paths, URLs in log and exception context); fragments never reach a server and can carry tokens.
+
 ## 0.1.1
 
 - Hash cache keys by default with an app-specific HMAC-SHA256; add `capture.cache_keys` / `DECISIONS_CAPTURE_CACHE_KEYS` to opt into scrubbed keys while keeping session keys private.
