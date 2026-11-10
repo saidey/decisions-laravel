@@ -274,4 +274,22 @@ class PrivacyTest extends TestCase
             $this->assertStringNotContainsString('#', (string) ($record['url'] ?? ''));
         }
     }
+
+    public function test_query_values_are_masked_by_name_pattern_and_by_value_shape(): void
+    {
+        $redactor = app(Redactor::class);
+        // Unknown names that still say what they are.
+        $this->assertSame('https://api.test/v1?client_secret=[redacted]&apiKey=[redacted]&X-Auth-Token=[redacted]&session_id=[redacted]&page=2',
+            $redactor->redactUrl('https://api.test/v1?client_secret=s3&apiKey=k1&X-Auth-Token=t9&session_id=abc&page=2'));
+        // Auth codes and one-time passwords.
+        $this->assertSame('https://api.test/cb?code=[redacted]&state=[redacted]&otp=[redacted]',
+            $redactor->redactUrl('https://api.test/cb?code=4/0AY0e&state=xyz&otp=123456'));
+        // Innocent names carrying secret-shaped values: long opaque strings, JWTs, emails, phones.
+        $this->assertSame('https://api.test/q?q=[redacted]&ref=[redacted]&to=[redacted]&msisdn=[redacted]&sort=name&id=42&uuid=9b2f0c1e-5d4a-4e7b-8f3a-2c1d0e9f8a7b',
+            $redactor->redactUrl('https://api.test/q?q=opaque_7f3kQ2abcdefghijklmnopqrstuv&ref=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln&to=a%40b.com&msisdn=%2B9607771234&sort=name&id=42&uuid=9b2f0c1e-5d4a-4e7b-8f3a-2c1d0e9f8a7b'));
+        $this->assertSame('https://api.test/q?to=[redacted]', $redactor->redactUrl('https://api.test/q?to=a%2540b.com'));
+        // Array-style and valueless parameters keep their shape.
+        $this->assertSame('https://api.test/x?filter[token]=[redacted]&flag&tags[]=a',
+            $redactor->redactUrl('https://api.test/x?filter[token]=abc&flag&tags[]=a'));
+    }
 }

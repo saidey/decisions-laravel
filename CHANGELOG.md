@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Mask URL query values by name pattern as well as known field names: any parameter whose name mentions password, secret, token, key, credential, auth, signature, session, cookie or jwt, plus `code`, `state`, `otp`, `pin`, `nonce`, `expires` and `sig`.
+- Mask query values by shape whatever their name: long opaque strings (24+ characters), JWTs, emails, phone numbers and other values the log scrubber would mask. UUIDs are kept as ids.
+
 ## 0.1.2
 
 - Drop URL fragments from every exported URL (outgoing requests, request paths, URLs in log and exception context); fragments never reach a server and can carry tokens.

@@ -70,12 +70,25 @@ class Redactor
         unset($segment);
         $path = $authority.implode('/', $segments);
         if ($query !== null) {
-            $fields = [...$this->fields, 'key', 'signature', 'expires', 'token', 'x-amz-signature', 'x-amz-credential', 'sig', 'access_token'];
+            $fields = [...$this->fields, 'expires', 'sig', 'code', 'state', 'otp', 'pin', 'nonce'];
             $parameters = explode('&', $query);
             foreach ($parameters as &$parameter) {
-                $key = explode('=', $parameter, 2)[0];
-                $name = strtolower(explode('[', urldecode($key), 2)[0]);
-                if (in_array($name, $fields, true)) {
+                [$key, $value] = array_pad(explode('=', $parameter, 2), 2, null);
+                if ($value === null || $value === '') {
+                    continue;
+                }
+                $name = strtolower(urldecode($key));
+                do {
+                    // Decode until stable, so double-encoded secrets (a%2540b.com) are still recognised.
+                    $previous = $value;
+                    $value = urldecode($value);
+                } while ($value !== $previous);
+                // Mask by name (known fields, or any name that says it is a credential) and by value shape,
+                // so a secret under an unfamiliar name (?q=sk_live_…, ?to=a@b.com) is still caught. UUIDs are ids.
+                $uuid = preg_match('~^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$~i', $value);
+                if (in_array(explode('[', $name, 2)[0], $fields, true)
+                    || preg_match('~password|passwd|secret|token|key|credential|auth|signature|session|cookie|jwt~', $name)
+                    || (! $uuid && (preg_match('~[a-z0-9_-]{24,}~i', $value) || $this->scrubValue($value) !== $value))) {
                     $parameter = $key.'=[redacted]';
                 }
             }
