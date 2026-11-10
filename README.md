@@ -1,6 +1,6 @@
 # decisions-ai/laravel
 
-Laravel client for decisions.site monitoring. Supports PHP 8.2+ and Laravel 11, 12, and 13 (Laravel 13 requires PHP 8.3+). Requires the cURL and zlib PHP extensions.
+Laravel client for decisions.site monitoring. Supports Laravel 13 on PHP 8.3+. Requires the cURL and zlib PHP extensions.
 
 ## Install
 
@@ -84,4 +84,4 @@ vendor/bin/phpunit
 vendor/bin/pint src config tests
 ```
 
-Tests use HTTP fakes and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use a database. GitHub Actions covers Laravel 11 / Testbench 9, Laravel 12 / Testbench 10, and Laravel 13 / Testbench 11 with PHPUnit 11.
+Tests use HTTP fakes and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use a database. GitHub Actions runs the suite on Laravel 13 / Testbench 11 with PHP 8.3 and 8.4.
