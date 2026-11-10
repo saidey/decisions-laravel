@@ -3,13 +3,14 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use DecisionsAi\Laravel\Redactor;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Throwable;
 
 class OutgoingRequests
 {
-    public function __construct(private Recorder $recorder) {}
+    public function __construct(private Recorder $recorder, private Redactor $redactor) {}
 
     public function handle(ResponseReceived|ConnectionFailed $event): void
     {
@@ -24,7 +25,7 @@ class OutgoingRequests
                 'ms' => $event instanceof ResponseReceived ? (float) ($event->response->handlerStats()['total_time'] ?? 0) * 1000 : 0.0,
                 'method' => $event->request->method(),
                 'host' => parse_url($url, PHP_URL_HOST),
-                'url' => $url,
+                'url' => $this->redactor->redactUrl($url),
                 'status' => $event instanceof ResponseReceived ? $event->response->status() : 0,
             ]);
         } catch (Throwable) {

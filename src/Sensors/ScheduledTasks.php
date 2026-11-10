@@ -14,6 +14,10 @@ class ScheduledTasks
     public function handle(ScheduledTaskFinished|ScheduledTaskFailed $event): void
     {
         try {
+            // Laravel emits Failed after Finished for foreground commands with a nonzero exit.
+            if ($event instanceof ScheduledTaskFinished && ($event->task->exitCode ?? 0) !== 0 && ! $event->task->runInBackground) {
+                return;
+            }
             $this->recorder->record([
                 't' => 'task',
                 'ms' => (float) ($event->runtime ?? 0) * 1000,

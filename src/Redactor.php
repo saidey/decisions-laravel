@@ -37,6 +37,27 @@ class Redactor
         }
     }
 
+    public function redactUrl(string $url): string
+    {
+        $url = preg_replace('~^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@~i', '$1', $url);
+        [$url, $fragment] = array_pad(explode('#', $url, 2), 2, null);
+        [$path, $query] = array_pad(explode('?', $url, 2), 2, null);
+        if ($query !== null) {
+            $fields = [...$this->fields, 'key', 'signature', 'sig', 'access_token'];
+            $parameters = explode('&', $query);
+            foreach ($parameters as &$parameter) {
+                $key = explode('=', $parameter, 2)[0];
+                $name = strtolower(explode('[', urldecode($key), 2)[0]);
+                if (in_array($name, $fields, true)) {
+                    $parameter = $key.'=[redacted]';
+                }
+            }
+            $path .= '?'.implode('&', $parameters);
+        }
+
+        return $path.($fragment !== null ? '#'.$fragment : '');
+    }
+
     private function redactArray(array $values, int $depth = 0): array
     {
         if ($depth > 64) {

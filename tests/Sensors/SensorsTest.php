@@ -40,6 +40,9 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Queue\Events\JobReleasedAfterException;
+use Illuminate\Queue\Jobs\SyncJob;
+use Illuminate\Queue\Worker;
+use Illuminate\Queue\WorkerOptions;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use RuntimeException;
@@ -51,10 +54,23 @@ use Symfony\Component\Mime\Email;
 
 class SensorsTest extends TestCase
 {
+    private array $scheduleStamps = [];
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 202)]);
+        config(['decisions.deploy' => 'sensors-'.bin2hex(random_bytes(8))]);
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->scheduleStamps as $stamp) {
+            if (is_file($stamp)) {
+                unlink($stamp);
+            }
+        }
+        parent::tearDown();
     }
 
     public function test_route_records_pattern_status_and_user_id(): void
@@ -220,14 +236,15 @@ class SensorsTest extends TestCase
         $task = collect($records[0]['tasks'])->first(fn ($task) => str_contains($task['command'], 'orders:sync'));
         $this->assertSame('*/5 * * * *', $task['cron']);
         $this->assertSame('UTC', $task['timezone']);
-        $this->assertTrue(cache()->has('decisions:schedule-reported:a1b2c3'));
-        $this->travel(59)->minutes();
+        $stamp = storage_path('framework/decisions-schedule-'.config('decisions.deploy'));
+        $this->assertFileExists($stamp);
+        touch($stamp, time() - 3540);
         $this->tick('schedule:run');
         $this->assertCount(1, $this->records('schedule'));
-        $this->travel(2)->minutes();
+        touch($stamp, time() - 3660);
         $this->tick('schedule:run');
         $this->assertCount(2, $this->records('schedule'));
-        config(['decisions.deploy' => 'next-deploy']);
+        config(['decisions.deploy' => 'next-'.bin2hex(random_bytes(8))]);
         $this->tick('schedule:run');
         $this->assertCount(3, $this->records('schedule'));
     }
@@ -241,7 +258,8 @@ class SensorsTest extends TestCase
         $this->assertSame(7, $record['exit']);
         $task = app(Schedule::class)->command('orders:sync')->cron('*/5 * * * *');
         Event::dispatch(new ScheduledTaskFinished($task, 0.25));
-        Event::dispatch(new ScheduledTaskFailed($task, new RuntimeException('task failed'), 0.5));
+        $failedTask = app(Schedule::class)->command('orders:fail');
+        Event::dispatch(new ScheduledTaskFailed($failedTask, new RuntimeException('task failed'), 0.5));
         $records = $this->records('task');
         $this->assertShape('task', $records[0]);
         $this->assertSame(['ok', 'failed'], array_column($records, 'status'));
@@ -321,6 +339,116 @@ class SensorsTest extends TestCase
         $this->assertSame([], $this->records('http'));
     }
 
+    public function test_outgoing_urls_strip_credentials_and_redact_query_secrets(): void
+    {
+        config(['decisions.redact.fields' => [...config('decisions.redact.fields'), 'pin']]);
+        app()->forgetInstance(Redactor::class);
+        $query = 'api_key=private&KEY=private&signature=private&sig=private&access_token=private&PIN=private&%74oken=private&token[]=private&safe=visible&safe=second';
+        $url = 'https://user:password@api.example.test:8443/pay?'.$query;
+        $request = new Request(new PsrRequest('GET', $url));
+        Event::dispatch(new ResponseReceived($request, new Response(new PsrResponse(200))));
+        Event::dispatch(new ConnectionFailed($request, new ConnectionException('offline')));
+        $expected = 'https://api.example.test:8443/pay?api_key=[redacted]&KEY=[redacted]&signature=[redacted]&sig=[redacted]&access_token=[redacted]&PIN=[redacted]&%74oken=[redacted]&token%5B%5D=[redacted]&safe=visible&safe=second';
+        $records = $this->records('http');
+        $this->assertCount(2, $records);
+        $this->assertSame([$expected, $expected], array_column($records, 'url'));
+        $this->assertSame(['api.example.test', 'api.example.test'], array_column($records, 'host'));
+    }
+
+    public function test_request_path_redacts_query_secrets_if_present(): void
+    {
+        $request = new class extends ServerRequest
+        {
+            public function getPathInfo(): string
+            {
+                return '/pay?api_key=private&access_token=private&safe=visible';
+            }
+        };
+        Event::dispatch(new RequestHandled($request, response('ok')));
+        $this->assertSame('/pay?api_key=[redacted]&access_token=[redacted]&safe=visible', $this->records('request')[0]['path']);
+    }
+
+    public function test_schedule_does_not_resolve_the_host_cache(): void
+    {
+        app(Schedule::class);
+        app()->bind('cache', function () {
+            $this->fail('Schedule monitoring resolved the host cache.');
+        });
+        $started = microtime(true);
+        $this->tick('schedule:run');
+        $this->tick('schedule:run');
+        $this->assertLessThan(1, microtime(true) - $started);
+        $this->assertCount(1, $this->records('schedule'));
+    }
+
+    public function test_schedule_filesystem_errors_do_not_escape(): void
+    {
+        $storage = app()->storagePath();
+        $file = tempnam(sys_get_temp_dir(), 'decisions-storage-');
+        app()->useStoragePath($file);
+        try {
+            $this->tick('schedule:run');
+            $this->assertSame([], $this->records('schedule'));
+        } finally {
+            app()->useStoragePath($storage);
+            unlink($file);
+        }
+    }
+
+    public function test_schedule_does_not_wait_for_a_locked_stamp(): void
+    {
+        $stamp = storage_path('framework/decisions-schedule-'.config('decisions.deploy'));
+        $this->scheduleStamps[] = $stamp;
+        $handle = fopen($stamp, 'c+');
+        flock($handle, LOCK_EX);
+        try {
+            $started = microtime(true);
+            $this->tick('schedule:run');
+            $this->assertLessThan(1, microtime(true) - $started);
+            $this->assertSame([], $this->records('schedule'));
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    public function test_worker_manual_release_failure_and_delete_emit_one_record_each(): void
+    {
+        $handler = new class
+        {
+            public function fire(Job $job, array $data): void
+            {
+                match ($data['action']) {
+                    'release' => $job->release(),
+                    'fail' => $job->fail(new RuntimeException('manual failure')),
+                    default => $job->delete(),
+                };
+            }
+        };
+        app()->instance('sensor-test-job', $handler);
+        foreach (['release', 'fail', 'delete'] as $action) {
+            $payload = json_encode(['job' => 'sensor-test-job@fire', 'data' => ['action' => $action]]);
+            $job = new SyncJob(app(), $payload, 'sync', 'default');
+            $worker = new Worker(app('queue'), app('events'), app(ExceptionHandler::class), fn () => false);
+            $worker->process('sync', $job, new WorkerOptions);
+        }
+        $this->assertSame(['released', 'failed', 'processed'], array_column($this->records('job'), 'status'));
+        $this->assertCount(1, $this->records('exception'));
+        $this->assertSame('manual failure', $this->records('exception')[0]['message']);
+    }
+
+    public function test_nonzero_task_exit_emits_once_and_repeated_runs_are_retained(): void
+    {
+        $task = app(Schedule::class)->command('orders:fail');
+        $task->exitCode = 1;
+        for ($run = 0; $run < 2; $run++) {
+            Event::dispatch(new ScheduledTaskFinished($task, 0.25));
+            Event::dispatch(new ScheduledTaskFailed($task, new RuntimeException('nonzero exit'), 0.25));
+        }
+        $records = $this->records('task');
+        $this->assertSame(['failed', 'failed'], array_column($records, 'status'));
+        $this->assertSame([250.0, 250.0], array_column($records, 'ms'));
+    }
+
     private function job(): Job
     {
         $job = $this->createMock(Job::class);
@@ -333,6 +461,9 @@ class SensorsTest extends TestCase
 
     private function tick(string $command, int $exit = 0): void
     {
+        if (in_array($command, ['schedule:run', 'schedule:work'], true)) {
+            $this->scheduleStamps[] = storage_path('framework/decisions-schedule-'.rawurlencode((string) config('decisions.deploy')));
+        }
         $input = new ArrayInput([]);
         $output = new NullOutput;
         Event::dispatch(new CommandStarting($command, $input, $output));
