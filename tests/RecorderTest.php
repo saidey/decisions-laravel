@@ -13,7 +13,6 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
@@ -22,7 +21,7 @@ class RecorderTest extends TestCase
 {
     public function test_batch_matches_fixture_shape(): void
     {
-        Http::fake(['*' => Http::response('', 202)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 202)]);
         $fixture = json_decode(file_get_contents(__DIR__.'/Fixtures/batch-v1.json'), true, flags: JSON_THROW_ON_ERROR);
         $config = config('decisions');
         $config['capture']['source'] = true;
@@ -42,39 +41,38 @@ class RecorderTest extends TestCase
         $this->assertNotEmpty($batch['server']);
         foreach ($fixture['records'] as $index => $record) {
             $expected = array_keys($record);
-            if (! in_array('trace', $expected, true)) {
-                $expected[] = 'trace';
-            }
             $this->assertEqualsCanonicalizing($expected, array_keys($batch['records'][$index]));
             $this->assertIsFloat($batch['records'][$index]['at']);
-            $this->assertSame($batch['records'][0]['trace'], $batch['records'][$index]['trace']);
+            if ($record['t'] !== 'schedule') {
+                $this->assertSame($batch['records'][0]['trace'], $batch['records'][$index]['trace']);
+            }
         }
     }
 
     public function test_buffer_flushes_at_one_thousand_and_termination_sends_the_next_record(): void
     {
-        Http::fake(['*' => Http::response('', 202)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 202)]);
         $recorder = app(Recorder::class);
 
         for ($index = 0; $index < 1001; $index++) {
             $recorder->record(['t' => 'log', 'message' => (string) $index]);
         }
-        Http::assertSentCount(1);
+        $this->transportHttp()->assertSentCount(1);
         $this->app->terminate();
 
         $batches = $this->batches();
-        Http::assertSentCount(2);
+        $this->transportHttp()->assertSentCount(2);
         $this->assertCount(1000, $batches[0]['records']);
         $this->assertCount(1, $batches[1]['records']);
         $this->assertSame('1000', $batches[1]['records'][0]['message']);
         $this->assertSame(0, $recorder->droppedRecords());
         $recorder->flush();
-        Http::assertSentCount(2);
+        $this->transportHttp()->assertSentCount(2);
     }
 
     public function test_payloads_and_user_details_are_private_by_default(): void
     {
-        Http::fake(['*' => Http::response('', 202)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 202)]);
         $recorder = app(Recorder::class);
         $recorder->record([
             't' => 'request', 'body' => ['password' => 'secret'], 'payload' => ['email' => 'private'],
@@ -94,31 +92,31 @@ class RecorderTest extends TestCase
 
     public function test_disabled_or_missing_token_does_not_send(): void
     {
-        Http::fake();
+        $this->transportHttp()->fake();
         foreach ([['enabled' => false, 'token' => 'test'], ['enabled' => true, 'token' => null]] as $overrides) {
             $config = array_replace(config('decisions'), $overrides);
             $recorder = new Recorder(new Transport($config), new Redactor($config), $config);
             $recorder->record(['t' => 'log']);
             $recorder->flush();
         }
-        Http::assertNothingSent();
+        $this->transportHttp()->assertNothingSent();
     }
 
     public function test_failed_batches_are_counted_and_not_retried(): void
     {
-        Http::fake(['*' => Http::response('', 500)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 500)]);
         $recorder = app(Recorder::class);
         $recorder->record(['t' => 'log']);
         $recorder->flush();
         $recorder->flush();
 
-        Http::assertSentCount(1);
+        $this->transportHttp()->assertSentCount(1);
         $this->assertSame(1, $recorder->droppedRecords());
     }
 
     public function test_start_trace_flushes_pending_records_and_resets_identity(): void
     {
-        Http::fake();
+        $this->transportHttp()->fake();
         $recorder = app(Recorder::class);
         $first = $recorder->startTrace();
         $recorder->record(['t' => 'log', 'trace' => 'stale']);
@@ -144,7 +142,7 @@ class RecorderTest extends TestCase
 
     public function test_command_and_queue_lifecycle_hooks_flush_and_start_traces(): void
     {
-        Http::fake();
+        $this->transportHttp()->fake();
         $recorder = app(Recorder::class);
         $input = new ArrayInput([]);
         $output = new NullOutput;
@@ -159,14 +157,14 @@ class RecorderTest extends TestCase
         $recorder->record(['t' => 'job']);
         Event::dispatch(new JobFailed('sync', $job, new RuntimeException('failed')));
 
-        Http::assertSentCount(3);
+        $this->transportHttp()->assertSentCount(3);
         $traces = array_column(array_map(fn ($batch) => $batch['records'][0], $this->batches()), 'trace');
         $this->assertCount(3, array_unique($traces));
     }
 
     public function test_octane_lifecycle_resets_and_flushes_each_request(): void
     {
-        Http::fake();
+        $this->transportHttp()->fake();
         $recorder = app(Recorder::class);
         Event::dispatch('Laravel\\Octane\\Events\\RequestReceived', [new \stdClass]);
         $recorder->record(['t' => 'request']);
@@ -175,7 +173,7 @@ class RecorderTest extends TestCase
         $recorder->record(['t' => 'request']);
         Event::dispatch('Laravel\\Octane\\Events\\RequestTerminated', [new \stdClass]);
 
-        Http::assertSentCount(2);
+        $this->transportHttp()->assertSentCount(2);
         $batches = $this->batches();
         $this->assertNotSame($batches[0]['records'][0]['trace'], $batches[1]['records'][0]['trace']);
         $this->assertCount(1, $batches[1]['records']);
@@ -199,6 +197,6 @@ class RecorderTest extends TestCase
 
     private function batches(): array
     {
-        return Http::recorded()->map(fn ($pair) => json_decode(gzdecode($pair[0]->body()), true, flags: JSON_THROW_ON_ERROR))->all();
+        return $this->transportHttp()->recorded()->map(fn ($pair) => json_decode(gzdecode($pair[0]->body()), true, flags: JSON_THROW_ON_ERROR))->all();
     }
 }

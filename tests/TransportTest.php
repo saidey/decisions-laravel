@@ -4,20 +4,19 @@ namespace DecisionsAi\Laravel\Tests;
 
 use DecisionsAi\Laravel\Transport;
 use Illuminate\Http\Client\Factory;
-use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 class TransportTest extends TestCase
 {
     public function test_sends_gzipped_json_to_versioned_endpoint_with_bearer_token(): void
     {
-        Http::fake(['*' => Http::response('', 202)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('', 202)]);
         $transport = app(Transport::class);
         $batch = ['v' => 1, 'records' => [['t' => 'log', 'at' => 1762761600.123]]];
         $transport->send($batch);
 
-        Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1/ingest/v1'
+        $this->transportHttp()->assertSentCount(1);
+        $this->transportHttp()->assertSent(fn ($request) => $request->url() === 'http://127.0.0.1/ingest/v1'
             && $request->hasHeader('Authorization', 'Bearer test-token')
             && $request->hasHeader('Content-Encoding', 'gzip')
             && $request->hasHeader('Content-Type', 'application/json')
@@ -78,20 +77,20 @@ PHP;
 
     public function test_server_error_is_dropped_without_throwing_or_retrying(): void
     {
-        Http::fake(['*' => Http::response('failure', 500)]);
+        $this->transportHttp()->fake(['*' => $this->transportHttp()->response('failure', 500)]);
         $transport = app(Transport::class);
         $transport->send(['records' => [['t' => 'log'], ['t' => 'exception']]]);
 
-        Http::assertSentCount(1);
+        $this->transportHttp()->assertSentCount(1);
         $this->assertSame(2, $transport->droppedRecords());
     }
 
     public function test_encoding_errors_and_client_throwables_are_contained(): void
     {
-        Http::fake(fn () => throw new RuntimeException('client failed'));
+        $this->transportHttp()->fake(fn () => throw new RuntimeException('client failed'));
         $transport = app(Transport::class);
         $transport->send(['records' => [['t' => 'log', 'value' => INF]]]);
-        Http::assertNothingSent();
+        $this->transportHttp()->assertNothingSent();
         $transport->send(['records' => [['t' => 'log']]]);
         $this->assertSame(2, $transport->droppedRecords());
     }

@@ -3,8 +3,11 @@
 namespace DecisionsAi\Laravel\Tests;
 
 use DecisionsAi\Laravel\DecisionsServiceProvider;
+use DecisionsAi\Laravel\Transport;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
 use Orchestra\Testbench\TestCase as Orchestra;
+use ReflectionProperty;
 
 abstract class TestCase extends Orchestra
 {
@@ -22,10 +25,16 @@ abstract class TestCase extends Orchestra
         $app['config']->set('decisions.deploy', 'a1b2c3');
     }
 
+    protected function transportHttp(): Factory
+    {
+        return (new ReflectionProperty(Transport::class, 'http'))->getValue(app(Transport::class));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
 
         Http::preventStrayRequests();
+        $this->transportHttp()->preventStrayRequests();
     }
 }

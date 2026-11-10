@@ -36,7 +36,9 @@ class Recorder
                 return;
             }
 
-            $record['trace'] = $this->trace;
+            if (($record['t'] ?? null) !== 'schedule') {
+                $record['trace'] = $this->trace;
+            }
             $record['at'] = (float) ($record['at'] ?? microtime(true));
             $record = $this->redactor->redact($record);
             if ($record === []) {
