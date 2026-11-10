@@ -2,6 +2,8 @@
 
 namespace DecisionsAi\Laravel;
 
+use Illuminate\Contracts\Support\Arrayable;
+use JsonSerializable;
 use RuntimeException;
 use Throwable;
 
@@ -31,7 +33,9 @@ class Redactor
                 return [];
             }
 
-            return $this->redactArray($record);
+            $bytes = 0;
+
+            return $this->redactArray($record, 0, $bytes, ($record['t'] ?? null) === 'log');
         } catch (Throwable) {
             return [];
         }
@@ -58,9 +62,9 @@ class Redactor
         return $path.($fragment !== null ? '#'.$fragment : '');
     }
 
-    private function redactArray(array $values, int $depth = 0): array
+    private function redactArray(array $values, int $depth, int &$bytes, bool $log = false): array
     {
-        if ($depth > 64) {
+        if ($depth > 10) {
             throw new RuntimeException('Monitoring record exceeds the redaction depth limit.');
         }
 
@@ -76,12 +80,37 @@ class Redactor
             }
 
             if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)) {
-                $redacted[$key] = '[REDACTED]';
-            } elseif ($name === 'user' && is_array($value) && ! ($this->config['user_details'] ?? false)) {
-                $redacted[$key] = array_intersect_key($value, ['id' => true]);
+                $value = '[REDACTED]';
             } else {
-                $redacted[$key] = is_array($value) ? $this->redactArray($value, $depth + 1) : $value;
+                if (is_object($value)) {
+                    $value = match (true) {
+                        $value instanceof JsonSerializable => $value->jsonSerialize(),
+                        $value instanceof Arrayable => $value->toArray(),
+                        default => ['class' => get_class($value)],
+                    };
+                    // Serializers can return another object, including themselves.
+                    if (is_object($value)) {
+                        $value = $this->redactArray(['value' => $value], $depth + 1, $bytes)['value'];
+                    }
+                }
+                if ($name === 'user' && is_array($value) && ! ($this->config['user_details'] ?? false)) {
+                    $value = array_intersect_key($value, ['id' => true]);
+                }
+                if (is_array($value)) {
+                    $value = $this->redactArray($value, $depth + 1, $bytes);
+                } elseif (is_string($value)) {
+                    $value = mb_strcut($value, 0, $log && $depth === 0 && $name === 'message' ? 16384 : 8192, 'UTF-8');
+                }
             }
+            if ($name === 'context' && strlen(json_encode($value, JSON_THROW_ON_ERROR)) > 32768) {
+                $value = ['truncated' => true];
+            }
+            // Bound the temporary normalized tree before encoding the final record.
+            $bytes += strlen((string) $key) + (is_string($value) ? strlen($value) : 1);
+            if ($bytes > 131072) {
+                throw new RuntimeException('Monitoring record exceeds the normalization budget.');
+            }
+            $redacted[$key] = $value;
         }
 
         return $redacted;

@@ -1,6 +1,6 @@
 # decisions-ai/laravel
 
-Laravel client core for decisions.site monitoring. Supports PHP 8.2+ and Laravel 11, 12, and 13 (Laravel 13 requires PHP 8.3+). Requires the cURL and zlib PHP extensions.
+Laravel client for decisions.site monitoring. Supports PHP 8.2+ and Laravel 11, 12, and 13 (Laravel 13 requires PHP 8.3+). Requires the cURL and zlib PHP extensions.
 
 ## Install
 
@@ -8,7 +8,7 @@ Laravel client core for decisions.site monitoring. Supports PHP 8.2+ and Laravel
 composer require decisions-ai/laravel
 ```
 
-Laravel discovers the service provider automatically. Set your environment token:
+Laravel discovers the service provider and registers the sensors automatically. Set the ingest token for your decisions.site project environment:
 
 ```dotenv
 DECISIONS_TOKEN=your-environment-token
@@ -31,13 +31,32 @@ Publish the configuration to adjust privacy, buffer size, sampling, and ignore l
 php artisan vendor:publish --tag=decisions-config
 ```
 
-`config/decisions.php` defines `sample.{type}` (all `1.0`, including exceptions), `ignore.paths`, `ignore.commands`, `ignore.jobs`, `ignore.exceptions`, and a buffer of 1,000 records. Sampling and ignore settings are provided for the sensors; this core does not implement sensors.
+In the published `config/decisions.php`, each `sample.{type}` is a probability from `0.0` (off) to `1.0` (all records). Sampling draws independently for every record. All types default to `1.0`; exceptions use their own rate regardless of the surrounding request/job/command's rate.
 
-Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). Exception source context is enabled (`capture.source=true`). Sensitive fields and headers are recursively masked as `[REDACTED]`, case insensitively. Review the redaction lists before enabling payload capture or user details.
+```php
+'sample' => [
+    // Keep the other published type entries as needed.
+    'query' => 0.1,
+    'log' => 0.5,
+    'exception' => 1.0,
+],
+'ignore' => [
+    'paths' => ['/health', '/internal/*'],
+    'commands' => ['internal:*'],
+    'jobs' => [App\Jobs\InternalSync::class],
+    'exceptions' => [Illuminate\Auth\AuthenticationException::class],
+],
+```
 
-## Client core
+Path, command and job patterns support `*`. Paths match without the query string, with or without a leading slash. Ignoring a request, command or processing job suppresses its entire trace, including logs, queries and exceptions. Ignored exception classes also match subclasses; they suppress exception records only.
 
-This package currently supplies the recorder, transport, redactor, and lifecycle hooks. Event sensors are a separate implementation step. You can record wire-format records directly:
+Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). Exception source context is enabled (`capture.source=true`). Sensitive fields and headers are recursively masked as `[REDACTED]`, case insensitively. User IDs are captured when available; names and emails require `DECISIONS_USER_DETAILS=true`. Serializable and Arrayable objects are normalized before redaction; other objects expose only their class. Recursion stops at depth 10. Review the redaction lists before enabling payload capture or user details. Secrets embedded in free-text messages cannot be identified by field-name redaction.
+
+## Sensors and recording
+
+The provider automatically captures HTTP requests, reported exceptions, processed/failed/released queue jobs, console commands, scheduled task outcomes, schedule inventory, database queries, cache operations, sent mail, sent notifications, outgoing HTTP responses/connection failures, and logs. Background scheduled tasks are recorded when Laravel reports completion, not when launched. Background completion has no framework runtime value, so its duration is `0`. Schedule inventory is reported at most hourly per deployment. Logs carry the actual Monolog channel name; set a channel's `name` in `config/logging.php` if you want a distinct filter label.
+
+You can also record wire-format records directly:
 
 ```php
 use DecisionsAi\Laravel\Recorder;
@@ -49,9 +68,9 @@ app(Recorder::class)->record([
 ]);
 ```
 
-The recorder supplies the current trace UUID and a float Unix timestamp when absent. It flushes when the buffer fills, at application termination, and after a queue job or console command finishes or fails. Record 1,001 begins the next batch after the first 1,000 are sent. Queue jobs, console commands, and Octane requests begin fresh traces; Octane request termination flushes the request's batch.
+The recorder supplies the current trace UUID and a float Unix timestamp when absent. It flushes when the buffer fills (default 1,000 records), before the next record would take encoded batch JSON over 900 KB, at application termination, and after a queue job or console command finishes or fails. Requests, queue jobs and console commands begin fresh traces, including Octane request lifecycles.
 
-`Recorder::startTrace()` flushes pending records before starting a new trace. `Recorder::flush()` can also be called explicitly. Batches use wire format v1, gzip JSON, and a bearer token, with a one-second connection timeout and a one-second total timeout. Failed batches are discarded without retries. `Recorder::droppedRecords()` exposes the in-process count of failed records. Public entry points contain exceptions so monitoring cannot throw into the host app.
+`Recorder::startTrace()` flushes pending records before starting a new trace. `Recorder::flush()` can also be called explicitly. Batches use wire format v1, gzip JSON, and a bearer token, with a one-second connection timeout and a one-second total timeout. Failed batches are discarded without retries. `Recorder::droppedRecords()` exposes the in-process count of failed or oversized records; intentional sampling and ignores do not increment it. Strings are limited to 8 KB, log messages to 16 KB, and encoded context to 32 KB (oversized context becomes `{"truncated":true}`). Encoded records over 64 KB are dropped. Limits use 1 KB = 1,024 bytes. Source snippets read at most five lines on either side, skip vendor files and files over 2 MB, and reuse at most 30 file handles per trace. Flushes are synchronous; each delivery can take up to one second, and a long unit of work can cause multiple deliveries. Public entry points contain exceptions so monitoring cannot throw into the host app.
 
 ## Development
 

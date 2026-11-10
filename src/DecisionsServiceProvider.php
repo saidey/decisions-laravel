@@ -8,6 +8,7 @@ use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Contracts\Debug\ExceptionHandler;
@@ -15,7 +16,6 @@ use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\ResponseReceived;
-use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Notifications\Events\NotificationSent;
 use Illuminate\Queue\Events\JobFailed;
@@ -71,9 +71,14 @@ class DecisionsServiceProvider extends ServiceProvider
                     // Monitoring must not interrupt application termination.
                 }
             };
-            $start = function () {
+            $start = function ($event) {
                 try {
-                    $this->app->make(Recorder::class)->startTrace();
+                    [$type, $name] = match (true) {
+                        $event instanceof CommandStarting => ['command', $event->command],
+                        $event instanceof JobProcessing => ['job', $event->job->resolveName()],
+                        default => ['request', isset($event->request) ? $event->request->getPathInfo() : null],
+                    };
+                    $this->app->make(Recorder::class)->startTrace($type, $name);
                 } catch (Throwable) {
                     // Monitoring must not interrupt a new unit of work.
                 }
@@ -82,23 +87,39 @@ class DecisionsServiceProvider extends ServiceProvider
             foreach ([JobProcessing::class, CommandStarting::class, 'Laravel\\Octane\\Events\\RequestReceived'] as $event) {
                 $this->app['events']->listen($event, $start);
             }
+            $this->app->rebinding('request', function ($app, $request) {
+                try {
+                    $app->make(Recorder::class)->startTrace('request', $request->getPathInfo());
+                } catch (Throwable) {
+                }
+            });
 
             $listeners = [
                 Sensors\Requests::class => [RequestHandled::class],
                 Sensors\Jobs::class => [JobProcessed::class, JobFailed::class, JobReleasedAfterException::class],
                 Sensors\Commands::class => [CommandFinished::class],
-                Sensors\ScheduledTasks::class => [ScheduledTaskFinished::class, ScheduledTaskFailed::class],
+                Sensors\ScheduledTasks::class => [ScheduledTaskFinished::class, ScheduledTaskFailed::class, ScheduledBackgroundTaskFinished::class],
                 Sensors\Queries::class => [QueryExecuted::class],
                 Sensors\Cache::class => [CacheHit::class, CacheMissed::class, KeyWritten::class, KeyForgotten::class],
                 Sensors\Mail::class => [MessageSent::class],
                 Sensors\Notifications::class => [NotificationSent::class],
                 Sensors\OutgoingRequests::class => [ResponseReceived::class, ConnectionFailed::class],
-                Sensors\Logs::class => [MessageLogged::class],
                 Sensors\Schedule::class => [CommandStarting::class],
             ];
-            foreach ([...array_keys($listeners), Sensors\Exceptions::class, Sensors\Users::class] as $sensor) {
+            foreach ([...array_keys($listeners), Sensors\Exceptions::class, Sensors\Users::class, Sensors\Logs::class] as $sensor) {
                 $this->app->singleton($sensor);
             }
+            foreach ($this->app['config']->get('logging.channels', []) as $name => $channel) {
+                $this->app['config']->set('logging.channels.'.$name.'.tap', [...($channel['tap'] ?? []), Sensors\Logs::class]);
+            }
+            $this->callAfterResolving('log', function ($log) {
+                try {
+                    foreach ($log->getChannels() as $logger) {
+                        $this->app->make(Sensors\Logs::class)->__invoke($logger);
+                    }
+                } catch (Throwable) {
+                }
+            });
             foreach ($listeners as $sensor => $events) {
                 foreach ($events as $event) {
                     $this->app['events']->listen($event, function ($event) use ($sensor) {

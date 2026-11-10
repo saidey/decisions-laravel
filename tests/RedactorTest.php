@@ -3,6 +3,8 @@
 namespace DecisionsAi\Laravel\Tests;
 
 use DecisionsAi\Laravel\Redactor;
+use Illuminate\Contracts\Support\Arrayable;
+use JsonSerializable;
 
 class RedactorTest extends TestCase
 {
@@ -73,5 +75,97 @@ class RedactorTest extends TestCase
         $record = ['t' => 'log'];
         $record['context'] = &$record;
         $this->assertSame([], (new Redactor)->redact($record));
+    }
+
+    public function test_objects_are_normalized_before_recursive_privacy_and_redaction(): void
+    {
+        $arrayable = new class implements Arrayable
+        {
+            public function toArray(): array
+            {
+                return ['password' => 'secret', 'body' => 'private', 'user_email' => 'private@example.test'];
+            }
+        };
+        $serializable = new class($arrayable) implements JsonSerializable
+        {
+            public function __construct(private Arrayable $credentials) {}
+
+            public function jsonSerialize(): mixed
+            {
+                return ['credentials' => $this->credentials, 'token' => 'secret', 'payload' => 'private'];
+            }
+        };
+        $record = (new Redactor)->redact([
+            'context' => ['plain' => (object) ['password' => 'secret'], 'nested' => $serializable],
+            'user' => new class implements JsonSerializable
+            {
+                public function jsonSerialize(): mixed
+                {
+                    return ['id' => '42', 'name' => 'Private', 'email' => 'private@example.test', 'password' => 'secret'];
+                }
+            },
+        ]);
+        $this->assertSame(['class' => 'stdClass'], $record['context']['plain']);
+        $this->assertSame(['password' => '[REDACTED]'], $record['context']['nested']['credentials']);
+        $this->assertSame('[REDACTED]', $record['context']['nested']['token']);
+        $this->assertArrayNotHasKey('payload', $record['context']['nested']);
+        $this->assertSame(['id' => '42'], $record['user']);
+        $this->assertStringNotContainsString('secret', json_encode($record));
+        $this->assertStringNotContainsString('private', json_encode($record));
+    }
+
+    public function test_json_serializable_takes_precedence_over_arrayable(): void
+    {
+        $object = new class implements Arrayable, JsonSerializable
+        {
+            public function jsonSerialize(): mixed
+            {
+                return ['safe' => 'json', 'password' => 'secret'];
+            }
+
+            public function toArray(): array
+            {
+                throw new \RuntimeException('Must prefer jsonSerialize.');
+            }
+        };
+        $this->assertSame(['value' => ['safe' => 'json', 'password' => '[REDACTED]']], (new Redactor)->redact(['value' => $object]));
+    }
+
+    public function test_serializable_cycles_and_throwables_are_contained(): void
+    {
+        $cycle = new class implements JsonSerializable
+        {
+            public function jsonSerialize(): mixed
+            {
+                return ['self' => $this];
+            }
+        };
+        $self = new class implements JsonSerializable
+        {
+            public function jsonSerialize(): mixed
+            {
+                return $this;
+            }
+        };
+        $throws = new class implements JsonSerializable
+        {
+            public function jsonSerialize(): mixed
+            {
+                throw new \RuntimeException('serializer failed');
+            }
+        };
+        foreach ([$cycle, $self, $throws] as $object) {
+            $this->assertSame([], (new Redactor)->redact(['context' => $object]));
+        }
+    }
+
+    public function test_redaction_depth_is_limited_to_ten(): void
+    {
+        $record = ['safe' => 'visible'];
+        for ($depth = 0; $depth < 10; $depth++) {
+            $record = ['nested' => $record];
+        }
+        $this->assertSame($record, (new Redactor)->redact($record));
+        $this->assertSame([], (new Redactor)->redact(['nested' => $record]));
     }
 }

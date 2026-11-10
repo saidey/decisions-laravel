@@ -2,6 +2,7 @@
 
 namespace DecisionsAi\Laravel;
 
+use Illuminate\Support\Str;
 use Throwable;
 
 class Recorder
@@ -16,6 +17,16 @@ class Recorder
 
     private bool $enabled = false;
 
+    private bool $ignored = false;
+
+    private ?string $traceType = null;
+
+    private array $metadata = [];
+
+    private int $recordBytes = 0;
+
+    private int $batchBytes = 0;
+
     public function __construct(
         private Transport $transport,
         private Redactor $redactor,
@@ -23,6 +34,13 @@ class Recorder
     ) {
         try {
             $this->enabled = (bool) ($config['enabled'] ?? ! empty($config['token'])) && ! empty($config['token']);
+            $this->metadata = [
+                'v' => 1,
+                'environment' => mb_strcut((string) ($config['environment'] ?? 'production'), 0, 8192, 'UTF-8'),
+                'deploy' => isset($config['deploy']) ? mb_strcut((string) $config['deploy'], 0, 8192, 'UTF-8') : null,
+                'server' => gethostname() ?: 'unknown',
+            ];
+            $this->batchBytes = strlen(json_encode([...$this->metadata, 'records' => []], Transport::JSON_FLAGS));
             $this->startTrace();
         } catch (Throwable) {
             $this->enabled = false;
@@ -32,7 +50,27 @@ class Recorder
     public function record(array $record): void
     {
         try {
-            if (! $this->enabled || $this->flushing) {
+            if (! $this->enabled || $this->flushing || $this->ignoreCurrentTrace()) {
+                return;
+            }
+
+            $type = $record['t'] ?? '';
+            if ($type === 'request' && $this->matchesIgnore('paths', $record['path'] ?? '')) {
+                $this->ignored = true;
+                $this->records = [];
+                $this->recordBytes = 0;
+
+                return;
+            }
+            if ($type === 'exception') {
+                foreach ($this->config['ignore']['exceptions'] ?? [] as $class) {
+                    if (is_a($record['class'] ?? '', $class, true)) {
+                        return;
+                    }
+                }
+            }
+            $rate = (float) ($this->config['sample'][$type] ?? 1.0);
+            if ($rate <= 0 || ($rate < 1 && random_int(0, PHP_INT_MAX - 1) / PHP_INT_MAX >= $rate)) {
                 return;
             }
 
@@ -47,7 +85,17 @@ class Recorder
                 return;
             }
 
+            $bytes = strlen(json_encode($record, Transport::JSON_FLAGS));
+            if ($bytes > 65536) {
+                $this->dropped++;
+
+                return;
+            }
+            if ($this->batchBytes + $this->recordBytes + $bytes + count($this->records) > Transport::MAX_BATCH_BYTES) {
+                $this->flush();
+            }
             $this->records[] = $record;
+            $this->recordBytes += $bytes;
             if (count($this->records) >= max(1, (int) ($this->config['buffer'] ?? 1000))) {
                 $this->flush();
             }
@@ -70,13 +118,10 @@ class Recorder
             $started = true;
             $records = $this->records;
             $this->records = [];
-            $this->transport->send([
-                'v' => 1,
-                'environment' => $this->config['environment'] ?? 'production',
-                'deploy' => $this->config['deploy'] ?? null,
-                'server' => gethostname() ?: 'unknown',
-                'records' => $records,
-            ]);
+            $this->recordBytes = 0;
+            if (! $this->ignored) {
+                $this->transport->send([...$this->metadata, 'records' => $records]);
+            }
         } catch (Throwable) {
             $this->dropped += count($records);
         } finally {
@@ -86,10 +131,16 @@ class Recorder
         }
     }
 
-    public function startTrace(): string
+    public function startTrace(?string $type = null, ?string $name = null): string
     {
         try {
             $this->flush();
+            $this->traceType = $type;
+            $this->ignored = $name !== null && $this->matchesIgnore(match ($type) {
+                'command' => 'commands',
+                'job' => 'jobs',
+                default => 'paths',
+            }, $name);
             $bytes = random_bytes(16);
             $bytes[6] = chr((ord($bytes[6]) & 0x0F) | 0x40);
             $bytes[8] = chr((ord($bytes[8]) & 0x3F) | 0x80);
@@ -100,6 +151,32 @@ class Recorder
         }
 
         return $this->trace;
+    }
+
+    public function traceId(): string
+    {
+        return $this->trace;
+    }
+
+    private function matchesIgnore(string $type, string $name): bool
+    {
+        foreach ($this->config['ignore'][$type] ?? [] as $pattern) {
+            if (Str::is($type === 'paths' ? ltrim($pattern, '/') : $pattern, $type === 'paths' ? ltrim($name, '/') : $name)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function ignoreCurrentTrace(): bool
+    {
+        if (! $this->ignored && in_array($this->traceType, [null, 'request'], true)
+            && ! empty($this->config['ignore']['paths']) && app()->bound('request')) {
+            $this->ignored = $this->matchesIgnore('paths', app('request')->getPathInfo());
+        }
+
+        return $this->ignored;
     }
 
     public function droppedRecords(): int

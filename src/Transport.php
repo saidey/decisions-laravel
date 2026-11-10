@@ -8,6 +8,10 @@ use Throwable;
 
 class Transport
 {
+    public const MAX_BATCH_BYTES = 900 * 1024;
+
+    public const JSON_FLAGS = JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION;
+
     private ?Factory $http = null;
 
     private array $config = [];
@@ -31,7 +35,13 @@ class Transport
                 return;
             }
 
-            $body = gzencode(json_encode($batch, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION));
+            $json = json_encode($batch, self::JSON_FLAGS);
+            if (strlen($json) > self::MAX_BATCH_BYTES) {
+                $this->dropped += count($batch['records'] ?? []);
+
+                return;
+            }
+            $body = gzencode($json);
             if ($body === false) {
                 throw new RuntimeException('Unable to compress monitoring batch.');
             }

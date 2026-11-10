@@ -3,6 +3,7 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use SplFileObject;
 use Throwable;
 use WeakMap;
 
@@ -10,16 +11,29 @@ class Exceptions
 {
     private ?WeakMap $reported = null;
 
+    private array $sources = [];
+
+    private string $trace = '';
+
     public function __construct(private Recorder $recorder, private Users $users) {}
 
     public function handle(Throwable $exception): void
     {
         try {
+            foreach (config('decisions.ignore.exceptions', []) as $class) {
+                if (is_a($exception, $class)) {
+                    return;
+                }
+            }
             $this->reported ??= new WeakMap;
             if (isset($this->reported[$exception])) {
                 return;
             }
             $this->reported[$exception] = true;
+            if ($this->trace !== $this->recorder->traceId()) {
+                $this->sources = [];
+                $this->trace = $this->recorder->traceId();
+            }
             $frames = [];
             $trace = [['file' => $exception->getFile(), 'line' => $exception->getLine()]];
             foreach (array_slice([...$trace, ...$exception->getTrace()], 0, 30) as $frame) {
@@ -33,14 +47,11 @@ class Exceptions
                     'function' => ($frame['class'] ?? '').($frame['type'] ?? '').($frame['function'] ?? ''),
                     'in_app' => $inApp,
                 ];
-                if (config('decisions.capture.source', true) && is_file($file) && is_readable($file)) {
-                    $lines = file($file, FILE_IGNORE_NEW_LINES);
-                    $source = [];
-                    $line = (int) ($frame['line'] ?? 0);
-                    for ($number = max(1, $line - 5); $number <= min(count($lines), $line + 5); $number++) {
-                        $source[$number] = $lines[$number - 1];
+                if (config('decisions.capture.source', true)) {
+                    $source = $this->source($file, (int) ($frame['line'] ?? 0));
+                    if ($source !== null) {
+                        $entry['source'] = $source;
                     }
-                    $entry['source'] = $source;
                 }
                 $frames[] = $entry;
             }
@@ -57,6 +68,42 @@ class Exceptions
                 ...$this->users->identity(true),
             ]);
         } catch (Throwable) {
+        }
+    }
+
+    private function source(string $file, int $line): ?array
+    {
+        try {
+            $path = realpath($file);
+            $base = rtrim(base_path(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+            $relative = $path !== false && str_starts_with($path, $base) ? substr($path, strlen($base)) : $path;
+            if ($path === false || $line < 1 || str_contains('/'.str_replace('\\', '/', $relative), '/vendor/')) {
+                return null;
+            }
+            if (! array_key_exists($path, $this->sources)) {
+                if (count($this->sources) >= 30) {
+                    return null;
+                }
+                $this->sources[$path] = null;
+                if (! is_file($path) || ! is_readable($path) || filesize($path) > 2 * 1024 * 1024) {
+                    return null;
+                }
+                $this->sources[$path] = new SplFileObject($path, 'r');
+            }
+            $source = $this->sources[$path];
+            if ($source === null) {
+                return null;
+            }
+            $source->seek(max(0, $line - 6));
+            $lines = [];
+            for ($number = max(1, $line - 5); $number <= $line + 5 && ! $source->eof(); $number++) {
+                $lines[$number] = mb_strcut(rtrim($source->current(), "\r\n"), 0, 8192, 'UTF-8');
+                $source->next();
+            }
+
+            return $lines;
+        } catch (Throwable) {
+            return null;
         }
     }
 }
