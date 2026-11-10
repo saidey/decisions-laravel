@@ -71,7 +71,9 @@ class SecurityFixTest extends TestCase
         $this->assertSame(['exception', 'log'], array_column($records, 't'));
         $this->assertSame(['Failure: [REDACTED]', 'Failure: [REDACTED]'], array_column($records, 'message'));
         $this->assertStringNotContainsString($secret, json_encode($records));
-        $source = app(Redactor::class)->redact(['trace_frames' => [['source' => [1 => '// '.$secret]]]]);
+        $config = config('decisions');
+        $config['capture']['source'] = true;
+        $source = (new Redactor($config))->redact(['trace_frames' => [['source' => [1 => '// '.$secret]]]]);
         $this->assertSame('// [REDACTED]', $source['trace_frames'][0]['source'][1]);
     }
 
@@ -175,6 +177,7 @@ class SecurityFixTest extends TestCase
 
     public function test_source_capture_rejects_symlinks_outside_base_and_scrubs_captured_lines(): void
     {
+        config(['decisions.capture.source' => true]);
         $outside = tempnam(__DIR__, 'security-source-');
         $link = app_path('SecuritySourceLink.php');
         $inside = app_path('SecuritySource.php');
@@ -182,7 +185,15 @@ class SecurityFixTest extends TestCase
             mkdir(dirname($link), 0777, true);
         }
         file_put_contents($outside, "<?php\n// outside-content\nthrow new \\RuntimeException('outside');\n");
-        file_put_contents($inside, "<?php\n// password=short-secret\n// alice@example.test\nthrow new \\RuntimeException('inside');\n");
+        file_put_contents($inside, <<<'PHP'
+<?php
+$credentials = [
+    'password' => 'short-secret',
+];
+// alice@example.test
+$apiKey = "abc";
+throw new \RuntimeException('inside');
+PHP);
         symlink($outside, $link);
         try {
             $sensor = app(Exceptions::class);
@@ -197,8 +208,9 @@ class SecurityFixTest extends TestCase
             $records = $this->records();
             $this->assertArrayNotHasKey('source', $records[0]['trace_frames'][0]);
             $source = $records[1]['trace_frames'][0]['source'];
-            $this->assertSame('// [REDACTED]', $source[2]);
-            $this->assertSame('// [REDACTED]', $source[3]);
+            $this->assertSame("    'password' => '[REDACTED]',", $source[3]);
+            $this->assertSame('// [REDACTED]', $source[5]);
+            $this->assertSame('$apiKey = "[REDACTED]";', $source[6]);
             $this->assertStringNotContainsString('outside-content', json_encode($records));
             $this->assertStringNotContainsString('short-secret', json_encode($records));
             $this->assertStringNotContainsString('alice@example.test', json_encode($records));
@@ -206,6 +218,32 @@ class SecurityFixTest extends TestCase
             unlink($link);
             unlink($inside);
             unlink($outside);
+        }
+    }
+
+    public function test_default_config_does_not_capture_source(): void
+    {
+        $this->assertFalse(config('decisions.capture.source'));
+        $file = app_path('DefaultSource.php');
+        if (! is_dir(dirname($file))) {
+            mkdir(dirname($file), 0777, true);
+        }
+        file_put_contents($file, "<?php\nthrow new \\RuntimeException('default source');\n");
+        try {
+            try {
+                require $file;
+            } catch (RuntimeException $exception) {
+                $sensor = app(Exceptions::class);
+                $sensor->handle($exception);
+                $this->assertSame([], (new \ReflectionProperty(Exceptions::class, 'sources'))->getValue($sensor));
+            }
+            $records = $this->records();
+            $this->assertCount(1, $records);
+            foreach ($records[0]['trace_frames'] as $frame) {
+                $this->assertArrayNotHasKey('source', $frame);
+            }
+        } finally {
+            unlink($file);
         }
     }
 

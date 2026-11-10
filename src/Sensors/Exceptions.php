@@ -48,7 +48,7 @@ class Exceptions
                     'function' => ($frame['class'] ?? '').($frame['type'] ?? '').($frame['function'] ?? ''),
                     'in_app' => $inApp,
                 ];
-                if (config('decisions.capture.source', true)) {
+                if (config('decisions.capture.source', false)) {
                     $source = $this->source($file, (int) ($frame['line'] ?? 0));
                     if ($source !== null) {
                         $entry['source'] = $source;

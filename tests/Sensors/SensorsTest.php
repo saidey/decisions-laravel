@@ -159,6 +159,7 @@ class SensorsTest extends TestCase
 
     public function test_exception_frames_source_and_app_boundary(): void
     {
+        config(['decisions.capture.source' => true]);
         $appFile = app_path('MonitoringSource.php');
         $vendorFile = base_path('vendor/MonitoringSource.php');
         foreach ([$appFile, $vendorFile] as $file) {

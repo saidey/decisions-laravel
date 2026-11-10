@@ -223,6 +223,7 @@ class ClientReviewTest extends TestCase
 
     public function test_source_file_handles_are_cached_per_trace_and_large_files_are_skipped(): void
     {
+        config(['decisions.capture.source' => true]);
         $small = app_path('ReviewSource.php');
         $large = app_path('ReviewLargeSource.php');
         if (! is_dir(dirname($small))) {

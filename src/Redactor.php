@@ -92,13 +92,22 @@ class Redactor
 
     public function scrubValue(string $value): string
     {
-        return preg_replace([
-            '~[\x22\x27]?\b(?:password|password_confirmation|token|access_token|refresh_token|api_key|secret)\b[\s\x22\x27]*[:=]\s*+(?!\?(?:\s|[,;)]|$)|:[a-z_][a-z0-9_]*(?:\s|[,;)]|$))(?:\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^\s,;&)]+)~i',
-            '~\bBearer\s+[a-z0-9._\~+/-]+=*~i',
-            '~\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b~i',
-            '~[a-z0-9.!#$%&\x27*+/=?^_`{|}\~-]+@[a-z0-9.-]+\.[a-z]{2,}~i',
-            '~(?<![a-z0-9+/_-])[a-z0-9+/_-]{32,}={0,2}(?![a-z0-9+/_-])~i',
-        ], '[REDACTED]', $value) ?? '[REDACTED]';
+        $fields = implode('|', array_map(fn ($field) => preg_quote($field, '~'), $this->fields));
+        $sensitive = 'password|secret|token|key|credential';
+        $quotedField = '(?:'.$fields.'|[^\x22\x27\r\n]*(?:'.$sensitive.')[^\x22\x27\r\n]*)';
+        $variable = '(?:'.$fields.'|[a-z0-9_]*(?:'.$sensitive.')[a-z0-9_]*)';
+        $patterns = [
+            '(?<prefix>(?:(?:\x27'.$quotedField.'\x27|\x22'.$quotedField.'\x22)\s*=>|\$'.$variable.'\s*=(?!=|>))\s*)(?<quote>[\x22\x27])(?:\\\\.|(?!\k<quote>)[^\\\\])*\k<quote>',
+            '[\x22\x27]?\b(?:password|password_confirmation|token|access_token|refresh_token|api_key|secret)\b[\s\x22\x27]*[:=]\s*+(?!\?(?:\s|[,;)]|$)|:[a-z_][a-z0-9_]*(?:\s|[,;)]|$))(?:\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^\s,;&)]+)',
+            '\bBearer\s+[a-z0-9._\~+/-]+=*',
+            '\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b',
+            '[a-z0-9.!#$%&\x27*+/=?^_`{|}\~-]+@[a-z0-9.-]+\.[a-z]{2,}',
+            '(?<![a-z0-9+/_-])[a-z0-9+/_-]{32,}={0,2}(?![a-z0-9+/_-])',
+        ];
+
+        return preg_replace_callback('~'.implode('|', $patterns).'~i', fn ($match) => isset($match['prefix']) && $match['prefix'] !== ''
+            ? $match['prefix'].$match['quote'].'[REDACTED]'.$match['quote']
+            : '[REDACTED]', $value) ?? '[REDACTED]';
     }
 
     private function redactArray(array $values, int $depth, int &$bytes, bool $log = false, bool $source = false): array
@@ -113,7 +122,7 @@ class Redactor
 
             if ((! ($this->config['capture']['payloads'] ?? false) && in_array($name, ['body', 'payload'], true))
                 || (! ($this->config['capture']['bindings'] ?? false) && $name === 'bindings')
-                || (! ($this->config['capture']['source'] ?? true) && $name === 'source')
+                || (! ($this->config['capture']['source'] ?? false) && $name === 'source')
                 || (! ($this->config['user_details'] ?? false) && in_array($name, ['user_name', 'user_email'], true))) {
                 continue;
             }

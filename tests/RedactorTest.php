@@ -5,9 +5,46 @@ namespace DecisionsAi\Laravel\Tests;
 use DecisionsAi\Laravel\Redactor;
 use Illuminate\Contracts\Support\Arrayable;
 use JsonSerializable;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class RedactorTest extends TestCase
 {
+    public static function sensitiveAssignments(): array
+    {
+        return [
+            'single quoted array pair' => ["'password' => 'short-secret',", "'password' => '[REDACTED]',"],
+            'double quoted array pair' => ['"PASSWORD" => "short-secret",', '"PASSWORD" => "[REDACTED]",'],
+            'variable assignment' => ['$apiKey = "abc";', '$apiKey = "[REDACTED]";'],
+            'single quoted variable' => ["\$clientSecret = 'abc';", "\$clientSecret = '[REDACTED]';"],
+            'credential substring' => ['"client-credentials" => "abc",', '"client-credentials" => "[REDACTED]",'],
+            'token substring' => ["'accessToken' => 'abc',", "'accessToken' => '[REDACTED]',"],
+            'custom array field' => ["'PIN' => '1234',", "'PIN' => '[REDACTED]',"],
+            'custom variable' => ['$pin = "1234";', '$pin = "[REDACTED]";'],
+            'escaped single quote' => ["'password' => 'short\\'secret',", "'password' => '[REDACTED]',"],
+            'escaped double quote' => ['$apiKey = "short\\"secret";', '$apiKey = "[REDACTED]";'],
+            'ordinary array field' => ["'label' => 'visible',", "'label' => 'visible',"],
+            'ordinary variable' => ['$label = "visible";', '$label = "visible";'],
+        ];
+    }
+
+    #[DataProvider('sensitiveAssignments')]
+    public function test_quoted_sensitive_assignments_mask_values(string $input, string $expected): void
+    {
+        $config = config('decisions');
+        $config['redact']['fields'][] = 'pin';
+        $redactor = new Redactor($config);
+
+        $this->assertSame($expected, $redactor->scrubValue($input));
+        $this->assertSame($expected, $redactor->scrubValue($expected));
+    }
+
+    public function test_source_is_removed_without_explicit_capture_configuration(): void
+    {
+        $record = (new Redactor)->redact(['trace_frames' => [['source' => [1 => 'code']]]]);
+
+        $this->assertArrayNotHasKey('source', $record['trace_frames'][0]);
+    }
+
     public function test_nested_fields_and_headers_are_masked_case_insensitively(): void
     {
         $config = config('decisions');

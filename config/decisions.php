@@ -40,6 +40,6 @@ return [
     'capture' => [
         'payloads' => false,
         'bindings' => false,
-        'source' => true,
+        'source' => env('DECISIONS_CAPTURE_SOURCE', false),
     ],
 ];
