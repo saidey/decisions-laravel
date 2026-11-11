@@ -42,7 +42,7 @@ use Throwable;
 
 class DecisionsServiceProvider extends ServiceProvider
 {
-    public const VERSION = '0.2.3';
+    public const VERSION = '0.2.4';
 
     public function register(): void
     {

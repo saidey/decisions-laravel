@@ -3,13 +3,26 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use DecisionsAi\Laravel\Redactor;
 use DecisionsAi\Laravel\RequestLifecycle;
 use Illuminate\Database\Events\QueryExecuted;
 use Throwable;
 
 class Queries
 {
-    public function __construct(private Recorder $recorder, private RequestLifecycle $lifecycle) {}
+    public function __construct(private Recorder $recorder, private RequestLifecycle $lifecycle, private Redactor $redactor) {}
+
+    // Inline bindings only after scrubbing them: emails, tokens, phone numbers and password hashes never leave as SQL text.
+    private function sql(QueryExecuted $event): string
+    {
+        $bindings = array_map(fn ($value) => match (true) {
+            ! is_string($value) => $value,
+            (bool) preg_match('~^\$(2[abxy]|argon2i?d?)\$~', $value) => '[redacted]',
+            default => $this->redactor->scrubValue($value),
+        }, $event->connection->prepareBindings($event->bindings));
+
+        return $event->connection->query()->getGrammar()->substituteBindingsIntoRawSql($event->sql, $bindings);
+    }
 
     public function handle(QueryExecuted $event): void
     {
@@ -29,7 +42,7 @@ class Queries
             $this->recorder->record([
                 't' => 'query',
                 'ms' => (float) $event->time,
-                'sql' => config('decisions.capture.bindings', false) ? $event->toRawSql() : $event->sql,
+                'sql' => config('decisions.capture.bindings', false) ? $this->sql($event) : $event->sql,
                 'connection' => $event->connectionName,
                 'connection_type' => $event->connection->getDriverName(),
                 ...$this->lifecycle->context((float) $event->time),

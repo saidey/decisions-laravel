@@ -211,6 +211,37 @@ class SensorsTest extends TestCase
         $this->assertShape('query', $this->records('query')[1]);
     }
 
+    public function test_inlined_bindings_are_scrubbed_and_password_hashes_masked(): void
+    {
+        config(['decisions.capture.bindings' => true]);
+        $connection = new Connection(new \PDO('sqlite::memory:'), 'database', '', ['name' => 'mysql']);
+        Event::dispatch(new QueryExecuted('select * from users where email = ? and password = ? and id = ?', ['aisha@example.test', '$2y$12$abcdefghijklmnopqrstuuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012', 42], 1, $connection));
+        $sql = $this->records('query')[0]['sql'];
+
+        $this->assertStringNotContainsString('aisha@example.test', $sql);
+        $this->assertStringNotContainsString('$2y$12$', $sql);
+        $this->assertStringContainsString('42', $sql);
+    }
+
+    public function test_request_payload_is_sent_only_when_enabled_with_credentials_redacted(): void
+    {
+        Event::dispatch(new RequestHandled(ServerRequest::create('/orders', 'POST', ['item' => 'tea', 'password' => 'secret']), response('ok')));
+        app(RequestLifecycle::class)->finish(false);
+        $this->assertArrayNotHasKey('payload', $this->records('request')[0]);
+
+        config(['decisions.capture.payloads' => true]);
+        app()->forgetInstance(Redactor::class);
+        app()->forgetInstance(Recorder::class);
+        app()->forgetInstance(RequestLifecycle::class);
+        app()->forgetInstance(Requests::class);
+        Event::dispatch(new RequestHandled(ServerRequest::create('/orders', 'POST', ['item' => 'tea', 'password' => 'secret']), response('ok')));
+        app(RequestLifecycle::class)->finish(false);
+        $payload = $this->records('request')[1]['payload'];
+
+        $this->assertSame('tea', $payload['item']);
+        $this->assertSame('[REDACTED]', $payload['password']);
+    }
+
     public function test_query_records_application_callsite_without_a_database(): void
     {
         $file = app_path('MonitoringQuery.php');

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- With `capture.bindings=true`, binding values are scrubbed before they are inlined into the SQL: emails, phone numbers, tokens and long secrets are masked, and password hashes (bcrypt, argon2) become `[redacted]`. Numbers are kept.
+- `capture.payloads=true` now sends the request body (`payload`) on request records, without uploaded files; credential fields are redacted.
+
 ## 0.2.3
 
 - Outgoing HTTP records mask every query-string value, not only ones that look secret, so `DECISIONS_SAMPLE_HTTP` can be turned on without sending customer data from third-party calls. Parameter names and paths are kept.
