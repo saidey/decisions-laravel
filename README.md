@@ -25,6 +25,7 @@ Optional configuration:
 | `DECISIONS_DEPLOY` | Unset | Deployment identifier, such as a commit SHA. |
 | `DECISIONS_USER_DETAILS` | `false` | Allow user names and email addresses alongside IDs. |
 | `DECISIONS_CAPTURE_CACHE_KEYS` | `false` | Capture scrubbed cache keys instead of hashed keys; session keys remain hashed. |
+| `DECISIONS_SECURITY_CAPTURE` | `false` | Enable security signals, hourly posture, and request IP/user agent capture. |
 
 Publish the configuration to adjust privacy, buffer size, sampling, and ignore lists:
 
@@ -33,6 +34,21 @@ php artisan vendor:publish --tag=decisions-config
 ```
 
 In the published `config/decisions.php`, each `sample.{type}` is a probability from `0.0` (off) to `1.0` (all records). Sampling draws independently for every record. All types default to `1.0`; exceptions use their own rate regardless of the surrounding request/job/command's rate.
+
+Security capture is opt-in through `security.capture` / `DECISIONS_SECURITY_CAPTURE`. It adds `security` records for authentication (including Fortify two-factor events when installed), 403/419/429/401 responses, matching 404 probes, token lifecycle, configured privileged model changes, and application posture. Security records include `kind`, `ts` (the same Unix timestamp as wire-format `at`), IP, user agent (at most 255 bytes), and user ID without name or email. Request records gain `ip` from Laravel's trusted-proxy-aware `$request->ip()` and `ua` only while enabled.
+
+Configure these keys under `security` in the published config:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `capture` | `false` | Enable all security capture. |
+| `probes` | `/.env`, `/.git`, `/wp-admin`, `/wp-login.php`, `/xmlrpc.php`, `phpmyadmin`, `/vendor/phpunit`, `../`, `/.aws`, `/server-status`, `/actuator`, `/cgi-bin` | Case-insensitive path substrings for 404 probes; exported paths pass through the redactor. |
+| `token_models` | Sanctum `Laravel\Sanctum\PersonalAccessToken` when installed, otherwise `[]` | Model class names whose created/deleted events send `tokenable_id`, `tokenable_type`, scrubbed name and abilities; token values are excluded. |
+| `watch_models` | `[]` | Model class names whose created/updated/deleted events send actor ID, subject class/key, action, and changed attribute names only. |
+
+Failed logins send only an HMAC-SHA256 identifier, keyed with `DECISIONS_TOKEN`, after trimming and lowercasing the first present credential among `email`, `username`, `name`, and `phone`. Credentials and attempted passwords are excluded. Rate-limit records omit `key` unless the application supplies a `throttle_key` request attribute; that value is HMAC-SHA256 hashed with the same environment token. Laravel's standard throttle exception does not expose its limiter key.
+
+Posture reports app debug/environment, secure-session-cookie configuration, HTTPS forcing (HTTPS `app.url` or the URL generator's forced scheme), and client/PHP/Laravel versions. It runs at boot and checks again on requests, auth/model events, commands, and jobs, at most hourly per process using the default configured cache store and a local timestamp. Cache failure still permits a locally throttled report. Composer advisory counts are deferred.
 
 ```php
 'sample' => [

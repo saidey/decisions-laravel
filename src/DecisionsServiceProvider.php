@@ -42,6 +42,8 @@ use Throwable;
 
 class DecisionsServiceProvider extends ServiceProvider
 {
+    public const VERSION = '0.2.0';
+
     public function register(): void
     {
         try {
@@ -181,6 +183,10 @@ class DecisionsServiceProvider extends ServiceProvider
             ];
             foreach ([...array_keys($listeners), Sensors\Exceptions::class, Sensors\Users::class, Sensors\Logs::class] as $sensor) {
                 $this->app->singleton($sensor);
+            }
+            if ($this->app['config']->get('decisions.security.capture', false)) {
+                $this->app->singleton(Sensors\Security::class);
+                $this->app->make(Sensors\Security::class)->register();
             }
             foreach ($this->app['config']->get('logging.channels', []) as $name => $channel) {
                 $this->app['config']->set('logging.channels.'.$name.'.tap', [...($channel['tap'] ?? []), Sensors\Logs::class]);

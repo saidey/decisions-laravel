@@ -17,6 +17,12 @@ class Requests
             $this->lifecycle->handled($event->request, function () use ($event) {
                 $request = $event->request;
                 $route = $request->route();
+                $security = [];
+                if (config('decisions.security.capture', false)) {
+                    $sensor = app(Security::class);
+                    $sensor->requestHandled($event);
+                    $security = $sensor->context($request);
+                }
 
                 return [
                     't' => 'request',
@@ -24,6 +30,7 @@ class Requests
                     'route' => $route ? '/'.ltrim($route->uri(), '/') : null,
                     'path' => $route ? '/'.ltrim($route->uri(), '/') : $this->redactor->redactUrl($request->getPathInfo()),
                     'status' => $event->response->getStatusCode(),
+                    ...$security,
                     ...$this->users->identity(true, email: false),
                 ];
             });

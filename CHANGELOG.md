@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+- Add opt-in security capture for auth/Fortify events, denied/expired/throttled/unauthenticated responses, probe paths, configurable token and privileged model lifecycle events, and hourly application posture.
+- Hash failed-login identifiers with the environment token; exclude credentials, token values, and changed attribute values. Include request IP and truncated user agent only when `DECISIONS_SECURITY_CAPTURE=true`.
+
 ## 0.1.6
 
 - With `user_details` enabled, request records carry `user_name` (not the email), so monitoring can show names for every signed-in user, not only those who hit an exception.
