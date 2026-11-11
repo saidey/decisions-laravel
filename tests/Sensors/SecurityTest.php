@@ -250,7 +250,7 @@ class SecurityTest extends TestCase
         $this->assertSame(config('app.debug'), $first['app']['debug']);
         $this->assertSame(config('app.env'), $first['app']['env']);
         $this->assertSame(config('session.secure'), $first['session']['secure']);
-        $this->assertSame('0.2.2', $first['client_version']);
+        $this->assertSame('0.2.3', $first['client_version']);
         $this->assertSame(DecisionsServiceProvider::VERSION, $first['client_version']);
         $this->assertSame(PHP_VERSION, $first['php_version']);
         $this->assertSame(app()->version(), $first['laravel_version']);

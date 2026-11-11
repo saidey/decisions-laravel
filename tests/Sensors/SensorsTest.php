@@ -343,7 +343,7 @@ class SensorsTest extends TestCase
         $this->assertSame([], $this->records('http'));
     }
 
-    public function test_outgoing_urls_strip_credentials_and_redact_query_secrets(): void
+    public function test_outgoing_urls_strip_credentials_and_redact_every_query_value(): void
     {
         config(['decisions.redact.fields' => [...config('decisions.redact.fields'), 'pin']]);
         app()->forgetInstance(Redactor::class);
@@ -352,11 +352,17 @@ class SensorsTest extends TestCase
         $request = new Request(new PsrRequest('GET', $url));
         Event::dispatch(new ResponseReceived($request, new Response(new PsrResponse(200))));
         Event::dispatch(new ConnectionFailed($request, new ConnectionException('offline')));
-        $expected = 'https://api.example.test:8443/pay?api_key=[redacted]&KEY=[redacted]&signature=[redacted]&sig=[redacted]&access_token=[redacted]&PIN=[redacted]&%74oken=[redacted]&token%5B%5D=[redacted]&safe=visible&safe=second';
+        $expected = 'https://api.example.test:8443/pay?api_key=[redacted]&KEY=[redacted]&signature=[redacted]&sig=[redacted]&access_token=[redacted]&PIN=[redacted]&%74oken=[redacted]&token%5B%5D=[redacted]&safe=[redacted]&safe=[redacted]';
         $records = $this->records('http');
         $this->assertCount(2, $records);
         $this->assertSame([$expected, $expected], array_column($records, 'url'));
         $this->assertSame(['api.example.test', 'api.example.test'], array_column($records, 'host'));
+    }
+
+    public function test_incoming_unmatched_paths_keep_ordinary_query_values(): void
+    {
+        $this->assertSame('/search?q=shoes&page=2', app(Redactor::class)->redactUrl('/search?q=shoes&page=2'));
+        $this->assertSame('/search?q=[redacted]&page=[redacted]', app(Redactor::class)->redactUrl('/search?q=shoes&page=2', allValues: true));
     }
 
     public function test_request_carries_user_name_only_when_user_details_are_enabled(): void

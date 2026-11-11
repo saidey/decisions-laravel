@@ -55,7 +55,8 @@ class Redactor
         }
     }
 
-    public function redactUrl(string $url): string
+    // $allValues masks every query value; outgoing calls can carry customer data under any name.
+    public function redactUrl(string $url, bool $allValues = false): string
     {
         $url = preg_replace('~^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@~i', '$1', $url);
         $url = explode('#', $url, 2)[0];
@@ -95,7 +96,8 @@ class Redactor
                 // Mask by name (known fields, or any name that says it is a credential) and by value shape,
                 // so a secret under an unfamiliar name (?q=sk_live_…, ?to=a@b.com) is still caught. UUIDs are ids.
                 $uuid = preg_match('~^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$~i', $value);
-                if (in_array(explode('[', $name, 2)[0], $fields, true)
+                if ($allValues
+                    || in_array(explode('[', $name, 2)[0], $fields, true)
                     || preg_match('~password|passwd|secret|token|key|credential|auth|signature|session|cookie|jwt~', $name)
                     || (! $uuid && (preg_match('~[a-z0-9_-]{24,}~i', $value) || $this->scrubValue($value) !== $value))) {
                     $parameter = $key.'=[redacted]';

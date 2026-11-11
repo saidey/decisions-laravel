@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Outgoing HTTP records mask every query-string value, not only ones that look secret, so `DECISIONS_SAMPLE_HTTP` can be turned on without sending customer data from third-party calls. Parameter names and paths are kept.
+
 ## 0.2.2
 
 - Security capture keeps the request IP on security and request records even when the app's `redact.fields` names `ip`; capture is the explicit opt-in to send it.

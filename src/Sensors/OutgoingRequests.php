@@ -37,7 +37,7 @@ class OutgoingRequests
                 ...$this->lifecycle->take($event->request->toPsrRequest(), $ms),
                 'method' => $event->request->method(),
                 'host' => parse_url($url, PHP_URL_HOST),
-                'url' => $this->redactor->redactUrl($url),
+                'url' => $this->redactor->redactUrl($url, allValues: true),
                 'status' => $event instanceof ResponseReceived ? $event->response->status() : 0,
             ]);
         } catch (Throwable) {
