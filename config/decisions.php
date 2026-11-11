@@ -1,7 +1,5 @@
 <?php
 
-use Laravel\Sanctum\PersonalAccessToken;
-
 return [
     'enabled' => env('DECISIONS_ENABLED', (bool) env('DECISIONS_TOKEN')),
     'token' => env('DECISIONS_TOKEN'),
@@ -13,7 +11,8 @@ return [
     'security' => [
         'capture' => env('DECISIONS_SECURITY_CAPTURE', false),
         'probes' => ['/.env', '/.git', '/wp-admin', '/wp-login.php', '/xmlrpc.php', 'phpmyadmin', '/vendor/phpunit', '../', '/.aws', '/server-status', '/actuator', '/cgi-bin'],
-        'token_models' => class_exists(PersonalAccessToken::class) ? [PersonalAccessToken::class] : [],
+        // null: Sanctum's configured token model, read after boot so Sanctum::usePersonalAccessTokenModel() applies.
+        'token_models' => null,
         'watch_models' => [],
     ],
 

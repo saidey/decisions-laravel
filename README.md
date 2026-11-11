@@ -43,7 +43,7 @@ Configure these keys under `security` in the published config:
 | --- | --- | --- |
 | `capture` | `false` | Enable all security capture. |
 | `probes` | `/.env`, `/.git`, `/wp-admin`, `/wp-login.php`, `/xmlrpc.php`, `phpmyadmin`, `/vendor/phpunit`, `../`, `/.aws`, `/server-status`, `/actuator`, `/cgi-bin` | Case-insensitive path substrings for 404 probes; exported paths pass through the redactor. |
-| `token_models` | Sanctum `Laravel\Sanctum\PersonalAccessToken` when installed, otherwise `[]` | Model class names whose created/deleted events send `tokenable_id`, `tokenable_type`, scrubbed name and abilities; token values are excluded. |
+| `token_models` | `null`: Sanctum's configured token model (`Sanctum::usePersonalAccessTokenModel()`), read after boot; `[]` when Sanctum is absent | Model class names whose created/deleted events send `tokenable_id`, `tokenable_type`, scrubbed name and abilities; token values are excluded. |
 | `watch_models` | `[]` | Model class names whose created/updated/deleted events send actor ID, subject class/key, action, and changed attribute names only. |
 
 Failed logins send only an HMAC-SHA256 identifier, keyed with `DECISIONS_TOKEN`, after trimming and lowercasing the first present credential among `email`, `username`, `name`, and `phone`. Credentials and attempted passwords are excluded. Rate-limit records omit `key` unless the application supplies a `throttle_key` request attribute; that value is HMAC-SHA256 hashed with the same environment token. Laravel's standard throttle exception does not expose its limiter key.

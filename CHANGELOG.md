@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Security capture keeps the request IP on security and request records even when the app's `redact.fields` names `ip`; capture is the explicit opt-in to send it.
+- `security.token_models` defaults to `null`, meaning Sanctum's configured token model (`Sanctum::usePersonalAccessTokenModel()`), read after boot, so apps with their own token model are seen.
+
 ## 0.2.1
 
 - Fix a memory leak: the shutdown hook held each app's request lifecycle (with its request and router) alive, about 3 MiB per booted app in test suites. It now holds it weakly.

@@ -21,6 +21,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
+use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 class SecurityTest extends TestCase
@@ -34,6 +35,9 @@ class SecurityTest extends TestCase
         $app['config']->set('cache.default', 'array');
         $app['config']->set('decisions.user_details', true);
         $app['config']->set('app.url', 'http://localhost');
+        if (str_contains($this->name(), 'redaction_list')) {
+            $app['config']->set('decisions.redact.fields', ['password', 'ip']);
+        }
     }
 
     protected function setUp(): void
@@ -146,6 +150,30 @@ class SecurityTest extends TestCase
         $this->assertSame('/denied', $this->security('forbidden')[0]['route']);
     }
 
+    public function test_captured_ip_survives_an_app_redaction_list_that_names_ip(): void
+    {
+        Route::get('/denied', fn () => response('', 403));
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.11'])->get('/denied')->assertForbidden();
+
+        $this->assertSame('203.0.113.11', $this->security('forbidden')[0]['ip']);
+        $this->assertSame('203.0.113.11', $this->records('request')[0]['ip']);
+    }
+
+    public function test_default_token_models_follow_sanctums_configured_model_after_boot(): void
+    {
+        config(['decisions.security.token_models' => null]);
+        if (! class_exists('Laravel\\Sanctum\\Sanctum')) {
+            eval('namespace Laravel\\Sanctum; class Sanctum { public static $personalAccessTokenModel = "Laravel\\\\Sanctum\\\\PersonalAccessToken"; }');
+        }
+        Sanctum::$personalAccessTokenModel = SecurityToken::class;
+        $this->app->forgetInstance(Security::class);
+        app(Security::class)->register();
+
+        Event::dispatch('eloquent.created: '.SecurityToken::class, [new SecurityToken(['tokenable_id' => 7, 'tokenable_type' => 'App\\Models\\User', 'name' => 'ci', 'abilities' => ['read']])]);
+
+        $this->assertNotEmpty($this->security('token_created'));
+    }
+
     public function test_available_throttle_key_is_hashed(): void
     {
         $request = Request::create('/limited');
@@ -222,7 +250,7 @@ class SecurityTest extends TestCase
         $this->assertSame(config('app.debug'), $first['app']['debug']);
         $this->assertSame(config('app.env'), $first['app']['env']);
         $this->assertSame(config('session.secure'), $first['session']['secure']);
-        $this->assertSame('0.2.1', $first['client_version']);
+        $this->assertSame('0.2.2', $first['client_version']);
         $this->assertSame(DecisionsServiceProvider::VERSION, $first['client_version']);
         $this->assertSame(PHP_VERSION, $first['php_version']);
         $this->assertSame(app()->version(), $first['laravel_version']);

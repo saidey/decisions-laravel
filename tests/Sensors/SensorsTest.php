@@ -6,6 +6,7 @@ use DecisionsAi\Laravel\Recorder;
 use DecisionsAi\Laravel\Redactor;
 use DecisionsAi\Laravel\RequestLifecycle;
 use DecisionsAi\Laravel\Sensors\Exceptions;
+use DecisionsAi\Laravel\Sensors\Requests;
 use DecisionsAi\Laravel\Tests\TestCase;
 use GuzzleHttp\Psr7\Request as PsrRequest;
 use GuzzleHttp\Psr7\Response as PsrResponse;
@@ -369,7 +370,7 @@ class SensorsTest extends TestCase
         app()->forgetInstance(Redactor::class);
         app()->forgetInstance(Recorder::class);
         app()->forgetInstance(RequestLifecycle::class);
-        app()->forgetInstance(\DecisionsAi\Laravel\Sensors\Requests::class);
+        app()->forgetInstance(Requests::class);
         Event::dispatch(new RequestHandled(ServerRequest::create('/orders'), response('ok')));
         app(RequestLifecycle::class)->finish(false);
         $record = $this->records('request')[1];

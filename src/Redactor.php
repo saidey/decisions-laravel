@@ -38,9 +38,18 @@ class Redactor
                 $record['key'] = $this->redactCacheKey($record['key'], $record['store'] ?? config('cache.default'));
             }
 
-            $bytes = 0;
+            // Security capture is an explicit opt-in to send the client IP, so the sensor's validated ip
+            // survives an app's field redaction list that names 'ip' for everything else.
+            $ip = ($this->config['security']['capture'] ?? false) && in_array($record['t'] ?? null, ['security', 'request'], true)
+                && is_string($record['ip'] ?? null) && filter_var($record['ip'], FILTER_VALIDATE_IP) !== false ? $record['ip'] : null;
 
-            return $this->redactArray($record, 0, $bytes, ($record['t'] ?? null) === 'log');
+            $bytes = 0;
+            $redacted = $this->redactArray($record, 0, $bytes, ($record['t'] ?? null) === 'log');
+            if ($ip !== null && $redacted !== []) {
+                $redacted['ip'] = $ip;
+            }
+
+            return $redacted;
         } catch (Throwable) {
             return [];
         }

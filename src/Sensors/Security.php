@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobProcessing;
+use Laravel\Sanctum\Sanctum;
 use ReflectionProperty;
 use Throwable;
 
@@ -46,17 +47,23 @@ class Security
             foreach (self::AUTH_EVENTS as $event => $kind) {
                 app('events')->listen($event, fn ($event) => $this->auth($event, $kind));
             }
-            foreach (['token_models' => ['created', 'deleted'], 'watch_models' => ['created', 'updated', 'deleted']] as $option => $actions) {
-                foreach (config('decisions.security.'.$option, []) as $model) {
-                    foreach ($actions as $action) {
-                        app('events')->listen('eloquent.'.$action.': '.$model, fn ($model) => $this->model($model, $action, $option === 'token_models'));
-                    }
-                }
-            }
+            $this->listenToModels(config('decisions.security.watch_models', []), ['created', 'updated', 'deleted'], false);
+            // Eloquent fires events per class, so follow the app's own token model, set during boot.
+            app()->booted(fn () => $this->listenToModels(config('decisions.security.token_models')
+                ?? (class_exists('Laravel\\Sanctum\\Sanctum') ? [Sanctum::$personalAccessTokenModel] : []), ['created', 'deleted'], true));
             foreach ([CommandStarting::class, JobProcessing::class] as $event) {
                 app('events')->listen($event, fn () => $this->posture());
             }
         } catch (Throwable) {
+        }
+    }
+
+    private function listenToModels(array $models, array $actions, bool $token): void
+    {
+        foreach ($models as $model) {
+            foreach ($actions as $action) {
+                app('events')->listen('eloquent.'.$action.': '.$model, fn ($model) => $this->model($model, $action, $token));
+            }
         }
     }
 
