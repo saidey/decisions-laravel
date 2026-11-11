@@ -42,7 +42,7 @@ use Throwable;
 
 class DecisionsServiceProvider extends ServiceProvider
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.2.1';
 
     public function register(): void
     {
@@ -71,9 +71,12 @@ class DecisionsServiceProvider extends ServiceProvider
                 }
             });
             $this->app->singleton(RequestLifecycle::class);
+            // Weak, so the shutdown hook doesn't keep each app's lifecycle (and its request and router) alive
+            // after the app is gone, as happens when a test suite boots one app per test.
             $this->app->afterResolving(RequestLifecycle::class, static function ($lifecycle) {
+                $lifecycle = \WeakReference::create($lifecycle);
                 register_shutdown_function(static function () use ($lifecycle) {
-                    $lifecycle->finish(false);
+                    $lifecycle->get()?->finish(false);
                 });
             });
             foreach ([ControllerDispatcher::class => Routing\ControllerDispatcher::class, CallableDispatcher::class => Routing\CallableDispatcher::class] as $contract => $decorator) {

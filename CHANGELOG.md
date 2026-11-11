@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.1
+
+- Fix a memory leak: the shutdown hook held each app's request lifecycle (with its request and router) alive, about 3 MiB per booted app in test suites. It now holds it weakly.
+
+## 0.2.0
 
 - Add opt-in security capture for auth/Fortify events, denied/expired/throttled/unauthenticated responses, probe paths, configurable token and privileged model lifecycle events, and hourly application posture.
 - Hash failed-login identifiers with the environment token; exclude credentials, token values, and changed attribute values. Include request IP and truncated user agent only when `DECISIONS_SECURITY_CAPTURE=true`.
