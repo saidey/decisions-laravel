@@ -358,6 +358,25 @@ class SensorsTest extends TestCase
         $this->assertSame(['api.example.test', 'api.example.test'], array_column($records, 'host'));
     }
 
+    public function test_request_carries_user_name_only_when_user_details_are_enabled(): void
+    {
+        $this->actingAs(new GenericUser(['id' => 7, 'name' => 'Aisha', 'email' => 'aisha@example.test']));
+        Event::dispatch(new RequestHandled(ServerRequest::create('/orders'), response('ok')));
+        app(RequestLifecycle::class)->finish(false);
+        $this->assertArrayNotHasKey('user_name', $this->records('request')[0]);
+
+        config(['decisions.user_details' => true]);
+        app()->forgetInstance(Redactor::class);
+        app()->forgetInstance(Recorder::class);
+        app()->forgetInstance(RequestLifecycle::class);
+        app()->forgetInstance(\DecisionsAi\Laravel\Sensors\Requests::class);
+        Event::dispatch(new RequestHandled(ServerRequest::create('/orders'), response('ok')));
+        app(RequestLifecycle::class)->finish(false);
+        $record = $this->records('request')[1];
+        $this->assertSame(['7', 'Aisha'], [$record['user'], $record['user_name']]);
+        $this->assertArrayNotHasKey('user_email', $record);
+    }
+
     public function test_request_path_redacts_query_secrets_if_present(): void
     {
         $request = new class extends ServerRequest

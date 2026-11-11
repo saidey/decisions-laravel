@@ -24,7 +24,7 @@ class Requests
                     'route' => $route ? '/'.ltrim($route->uri(), '/') : null,
                     'path' => $route ? '/'.ltrim($route->uri(), '/') : $this->redactor->redactUrl($request->getPathInfo()),
                     'status' => $event->response->getStatusCode(),
-                    ...$this->users->identity(),
+                    ...$this->users->identity(true, email: false),
                 ];
             });
         } catch (Throwable) {

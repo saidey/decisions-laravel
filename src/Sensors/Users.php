@@ -6,7 +6,8 @@ use Throwable;
 
 class Users
 {
-    public function identity(bool $details = false): array
+    // Requests carry the name only, so dashboards can label users; exceptions also carry the email.
+    public function identity(bool $details = false, bool $email = true): array
     {
         try {
             $id = auth()->id();
@@ -14,7 +15,9 @@ class Users
             if ($details && config('decisions.user_details', false)) {
                 $user = auth()->user();
                 $identity['user_name'] = $user?->name;
-                $identity['user_email'] = $user?->email;
+                if ($email) {
+                    $identity['user_email'] = $user?->email;
+                }
             }
 
             return $identity;

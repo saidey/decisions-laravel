@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- With `user_details` enabled, request records carry `user_name` (not the email), so monitoring can show names for every signed-in user, not only those who hit an exception.
+
 ## 0.1.5
 
 - Measure request lifecycle phases with monotonic offsets, cold-request bootstrap timing, and sparse phases where framework boundaries are unavailable. Defer each request record until termination; retain a partial-record fallback for missing termination.
