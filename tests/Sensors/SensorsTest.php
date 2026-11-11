@@ -235,12 +235,14 @@ class SensorsTest extends TestCase
         app()->forgetInstance(RequestLifecycle::class);
         app()->forgetInstance(Requests::class);
         Event::dispatch(new RequestHandled(ServerRequest::create('/orders', 'POST', ['item' => 'tea', 'password' => 'secret', 'current_password' => 'old', 'new_password' => 'new',
-            'card' => ['card_number' => '4111111111111111', 'cvv' => '123'], 'client_secret' => 'cs', 'access_token' => 'at', 'otp_code' => '999']), response('ok')));
+            'card' => ['card_number' => '4111111111111111', 'cvv' => '123'], 'client_secret' => 'cs', 'access_token' => 'at', 'otp_code' => '999',
+            'pwd' => 'p', 'cc_number' => '4111', 'account_number' => '123', 'recovery_code' => 'r', 'note' => 'call aisha@example.test']), response('ok')));
         app(RequestLifecycle::class)->finish(false);
         $payload = $this->records('request')[1]['payload'];
 
         $this->assertSame('tea', $payload['item']);
-        foreach (['password', 'current_password', 'new_password', 'card', 'client_secret', 'access_token', 'otp_code'] as $field) {
+        $this->assertStringNotContainsString('aisha@example.test', $payload['note']);
+        foreach (['password', 'current_password', 'new_password', 'card', 'client_secret', 'access_token', 'otp_code', 'pwd', 'cc_number', 'account_number', 'recovery_code'] as $field) {
             $this->assertSame('[REDACTED]', $payload[$field], $field);
         }
     }

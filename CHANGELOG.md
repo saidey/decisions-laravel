@@ -3,7 +3,7 @@
 ## 0.2.4
 
 - With `capture.bindings=true`, binding values are scrubbed before they are inlined into the SQL: emails, phone numbers, tokens and long secrets are masked, and password hashes (bcrypt, argon2) become `[redacted]`. Numbers are kept.
-- `capture.payloads=true` now sends the request body (`payload`) on request records, without uploaded files. Any field whose name says it is a credential or payment detail (password, secret, token, key, auth, card, cvv, iban, pin, otp…) is redacted at any depth.
+- `capture.payloads=true` now sends the request body (`payload`) on request records, without uploaded files. Any field whose name says it is a credential or payment detail (password, secret, token, key, auth, card, cvv, iban, pin, otp…) is redacted at any depth, and values are scrubbed like exception messages (emails, phone and card-shaped numbers, long tokens).
 
 ## 0.2.3
 

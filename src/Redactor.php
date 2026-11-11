@@ -197,11 +197,13 @@ class Redactor
 
             // User input (request bodies) can name credentials anything: new_password, client_secret, card_number.
             if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)
-                || ($input && preg_match('~password|passwd|secret|token|key|credential|auth|signature|session|cookie|jwt|card|cvv|cvc|iban|pin|otp~', $name))) {
+                || ($input && preg_match('~pass|pwd|secret|token|key|credential|auth|signature|session|cookie|jwt|card|cvv|cvc|iban|pin|otp|ssn|^cc|_cc|pan$|account|routing|recovery|code~', $name))) {
                 $value = '[REDACTED]';
             } else {
                 $scrub = $scrubValues || in_array($name, ['context', 'source'], true);
                 $nested = $input || ($depth === 0 && in_array($name, ['payload', 'body'], true));
+                // Input values also get value-shape scrubbing (emails, long tokens, card and phone digit runs).
+                $scrub = $scrub || $nested;
                 if (is_object($value)) {
                     $value = match (true) {
                         $value instanceof JsonSerializable => $value->jsonSerialize(),
