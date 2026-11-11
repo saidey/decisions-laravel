@@ -363,6 +363,7 @@ class SensorsTest extends TestCase
     {
         $this->assertSame('/search?q=shoes&page=2', app(Redactor::class)->redactUrl('/search?q=shoes&page=2'));
         $this->assertSame('/search?q=[redacted]&page=[redacted]', app(Redactor::class)->redactUrl('/search?q=shoes&page=2', allValues: true));
+        $this->assertSame('https://api.test/lookup?[redacted]&[redacted]&[redacted]', app(Redactor::class)->redactUrl('https://api.test/lookup?jane@example.com&token%3Dabc&empty=', allValues: true));
     }
 
     public function test_request_carries_user_name_only_when_user_details_are_enabled(): void

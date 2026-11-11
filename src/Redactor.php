@@ -85,6 +85,11 @@ class Redactor
             foreach ($parameters as &$parameter) {
                 [$key, $value] = array_pad(explode('=', $parameter, 2), 2, null);
                 if ($value === null || $value === '') {
+                    // A bare parameter (?jane@example.com, ?a%3Db) is itself the value.
+                    if ($allValues && $key !== '') {
+                        $parameter = '[redacted]';
+                    }
+
                     continue;
                 }
                 $name = strtolower(urldecode($key));
