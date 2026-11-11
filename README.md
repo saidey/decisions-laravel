@@ -26,6 +26,8 @@ Optional configuration:
 | `DECISIONS_USER_DETAILS` | `false` | Allow user names and email addresses alongside IDs. |
 | `DECISIONS_CAPTURE_CACHE_KEYS` | `false` | Capture scrubbed cache keys instead of hashed keys; session keys remain hashed. |
 | `DECISIONS_SECURITY_CAPTURE` | `false` | Enable security signals, hourly posture, and request IP/user agent capture. |
+| `DECISIONS_SECURITY_ENFORCE` | `false` | Enable cached IP blocking and approved response commands. |
+| `DECISIONS_SECURITY_IP_HEADER` | Unset | Trusted platform header to use for enforcement IPs; otherwise use `$request->ip()`. |
 
 Publish the configuration to adjust privacy, buffer size, sampling, and ignore lists:
 
@@ -75,6 +77,25 @@ Matched incoming requests send the route template as both `route` and `path`, wi
 
 Exception source context is opt-in (`capture.source=false` by default; set `DECISIONS_CAPTURE_SOURCE=true` to enable it). Only canonical files inside the application base directory and outside vendor directories are read. Symlinks outside that boundary are excluded. Captured source lines use the same value scrubbing as messages, including quoted values assigned to sensitive keys. Sensitive fields and headers are recursively masked as `[REDACTED]`, case insensitively. User IDs are captured when available; names and emails require `DECISIONS_USER_DETAILS=true`. Serializable and Arrayable objects are normalized before redaction; other objects expose only their class. Recursion stops at depth 10. Review redaction lists, task descriptions, and capture settings before enabling optional data. Pattern matching cannot recognize every secret; avoid putting sensitive values in messages or descriptions.
 
+## Security response enforcement
+
+Enforcement is independently opt-in with `DECISIONS_SECURITY_ENFORCE=true`. It prepends `DecisionsAi\Laravel\Http\BlockList` to the global middleware stack before sessions and auth. Exact IPv4/IPv6 addresses and CIDRs are checked only against the default configured cache store. Expired blocks are ignored, and cache failures allow requests through. Blocked requests return plain-text `403 Forbidden` without running later middleware, setting session cookies, or recording request/security events. Use a shared non-database cache with lock support, such as Redis, to keep checks free of database access; a database-backed cache itself queries the database.
+
+On DigitalOcean App Platform, set `DECISIONS_SECURITY_IP_HEADER=do-connecting-ip`. Configure a header only when your platform overwrites it with a trusted client IP. Enforcement validates the trimmed first value and falls back to `$request->ip()` if it is invalid; arbitrary headers are ignored by default. This middleware runs before Laravel's proxy middleware, so configure the platform header when needed.
+
+The client pulls `GET /ingest/v1/security` and acknowledges commands through `POST /ingest/v1/security/commands/{id}` using `DECISIONS_URL`, the environment bearer token, and the same one-second connection/total timeouts as ingest. There is no inbound command endpoint. Run Laravel's scheduler for minute refreshes; request termination also refreshes stale data after the response is sent. Refresh defaults to 60 seconds and honors the server's `refresh` interval. A cache lock prevents concurrent refreshes. Fetch failures keep the previous list, whose entries remain subject to their server-supplied `expires_at` timestamps (normally 24 hours).
+
+Configure application-specific handlers in `security.handlers`:
+
+```php
+'handlers' => [
+    'logout_user' => App\Security\LogoutUser::class, // Optional callable or invokable class.
+    'disable_user' => App\Security\DisableUser::class, // Required invokable class to disable users.
+],
+```
+
+Each handler receives the string user ID, for example `public function __invoke(string $userId): void`. `logout_user` deletes that user's database sessions when `session.driver=database`, rotates the default auth provider model's remember token when its column exists, and also invokes the configured logout handler. Use that handler to revoke sessions or tokens managed elsewhere. `disable_user` delegates entirely to your handler; without one it acknowledges failure. Commands older than 600 seconds are rejected as stale; unknown types are rejected as unsupported. IDs are reserved in cache before execution and retained for 24 hours, including failures, to prevent repeated side effects. Exceptions produce a short failed acknowledgement without exporting exception details. When enforcement is off, neither middleware nor refresh scheduling is registered and no security fetches occur.
+
 ## Sensors and recording
 
 The provider automatically captures HTTP requests, reported exceptions, processed/failed/released queue jobs, console commands, scheduled task outcomes, schedule inventory, database queries, cache operations, sent mail, sent notifications, outgoing HTTP responses/connection failures, and logs. Background scheduled tasks are recorded when Laravel reports completion, not when launched. Background completion has no framework runtime value, so its duration is `0`. Schedule inventory is reported at most hourly per deployment. Logs carry the actual Monolog channel name; set a channel's `name` in `config/logging.php` if you want a distinct filter label.
@@ -103,4 +124,4 @@ vendor/bin/phpunit
 vendor/bin/pint src config tests
 ```
 
-Tests use HTTP fakes and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use a database. GitHub Actions runs the suite on Laravel 13 / Testbench 11 with PHP 8.3 and 8.4.
+Tests use HTTP fakes, isolated in-memory SQLite for response commands, and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use an application database. GitHub Actions runs the suite on Laravel 13 / Testbench 11 with PHP 8.3 and 8.4.

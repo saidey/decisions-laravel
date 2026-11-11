@@ -14,6 +14,9 @@ class Requests
     public function handle(RequestHandled $event): void
     {
         try {
+            if ($event->request->attributes->get('decisions.blocked', false)) {
+                return;
+            }
             $this->lifecycle->handled($event->request, function () use ($event) {
                 $request = $event->request;
                 $route = $request->route();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+- Add opt-in cached IPv4/IPv6 and CIDR blocking before other global middleware, with minute scheduling and locked refresh after responses.
+- Pull approved response commands using the environment token; acknowledge stale, unsupported, failed and completed actions, and remember command IDs for 24 hours.
+- Support database-session logout, remember-token rotation, and application logout/disable handlers.
+
 ## 0.2.4
 
 - With `capture.bindings=true`, binding values are scrubbed before they are inlined into the SQL: emails, phone numbers, tokens and long secrets are masked, and password hashes (bcrypt, argon2) become `[redacted]`. Numbers are kept.
