@@ -4,17 +4,26 @@ namespace DecisionsAi\Laravel;
 
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
+use Illuminate\Cache\Events\ForgettingKey;
 use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Cache\Events\RetrievingKey;
+use Illuminate\Cache\Events\RetrievingManyKeys;
+use Illuminate\Cache\Events\WritingKey;
+use Illuminate\Cache\Events\WritingManyKeys;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Foundation\Bootstrap\BootProviders;
+use Illuminate\Foundation\Events\Terminating;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Notifications\Events\NotificationSent;
@@ -22,7 +31,12 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Queue\Events\JobQueueing;
 use Illuminate\Queue\Events\JobReleasedAfterException;
+use Illuminate\Routing\Contracts\CallableDispatcher;
+use Illuminate\Routing\Contracts\ControllerDispatcher;
+use Illuminate\Routing\Events\PreparingResponse;
+use Illuminate\Routing\Events\ResponsePrepared;
 use Illuminate\Support\ServiceProvider;
 use Throwable;
 
@@ -54,6 +68,38 @@ class DecisionsServiceProvider extends ServiceProvider
                     return new Recorder(new Transport, new Redactor, ['enabled' => false]);
                 }
             });
+            $this->app->singleton(RequestLifecycle::class);
+            $this->app->afterResolving(RequestLifecycle::class, static function ($lifecycle) {
+                register_shutdown_function(static function () use ($lifecycle) {
+                    $lifecycle->finish(false);
+                });
+            });
+            foreach ([ControllerDispatcher::class => Routing\ControllerDispatcher::class, CallableDispatcher::class => Routing\CallableDispatcher::class] as $contract => $decorator) {
+                $this->app->extend($contract, function ($dispatcher, $app) use ($decorator) {
+                    try {
+                        return new $decorator($dispatcher, $app->make(RequestLifecycle::class));
+                    } catch (Throwable) {
+                        return $dispatcher;
+                    }
+                });
+            }
+            $this->app->rebinding('request', function ($app, $request) {
+                try {
+                    $app->make(RequestLifecycle::class)->begin($request, ! $app->isBooted());
+                } catch (Throwable) {
+                }
+            });
+            if (! $this->app->runningInConsole() && $this->app->bound('request') && ! $this->app->isBooted()) {
+                $this->app->make(RequestLifecycle::class)->begin($this->app['request'], true);
+            }
+            $this->app->afterBootstrapping(BootProviders::class, function ($app) {
+                try {
+                    if ($app->resolved(RequestLifecycle::class)) {
+                        $app->make(RequestLifecycle::class)->bootstrapped();
+                    }
+                } catch (Throwable) {
+                }
+            });
         } catch (Throwable) {
             // Monitoring must not interrupt application registration.
         }
@@ -73,6 +119,11 @@ class DecisionsServiceProvider extends ServiceProvider
             };
             $start = function ($event) {
                 try {
+                    if (isset($event->request)) {
+                        ($event->sandbox ?? $this->app)->make(RequestLifecycle::class)->begin($event->request, false, true);
+
+                        return;
+                    }
                     if ($event instanceof JobProcessing) {
                         $this->app->make(Recorder::class)->startJobTrace($event->job, $event->job->resolveName());
 
@@ -91,13 +142,31 @@ class DecisionsServiceProvider extends ServiceProvider
             foreach ([JobProcessing::class, CommandStarting::class, 'Laravel\\Octane\\Events\\RequestReceived'] as $event) {
                 $this->app['events']->listen($event, $start);
             }
-            $this->app->rebinding('request', function ($app, $request) {
+            foreach ([PreparingResponse::class => 'preparingResponse', ResponsePrepared::class => 'responsePrepared'] as $event => $method) {
+                $this->app['events']->listen($event, function ($event) use ($method) {
+                    try {
+                        $this->app->make(RequestLifecycle::class)->$method($event->request);
+                    } catch (Throwable) {
+                    }
+                });
+            }
+            $this->app['events']->listen(Terminating::class, function () {
                 try {
-                    $app->make(Recorder::class)->startTrace('request', $request->getPathInfo());
+                    $this->app->make(RequestLifecycle::class)->terminating();
                 } catch (Throwable) {
                 }
             });
-
+            $this->callAfterResolving(Kernel::class, function ($kernel) {
+                try {
+                    $kernel->whenRequestLifecycleIsLongerThan(0, function () {
+                        try {
+                            $this->app->make(RequestLifecycle::class)->finish();
+                        } catch (Throwable) {
+                        }
+                    });
+                } catch (Throwable) {
+                }
+            });
             $listeners = [
                 Sensors\Requests::class => [RequestHandled::class],
                 Sensors\Jobs::class => [JobProcessed::class, JobFailed::class, JobReleasedAfterException::class],
@@ -142,6 +211,23 @@ class DecisionsServiceProvider extends ServiceProvider
                     }
                 });
             }
+            foreach ([
+                RequestSending::class => [Sensors\OutgoingRequests::class, 'start'],
+                RetrievingKey::class => [Sensors\Cache::class, 'start'],
+                RetrievingManyKeys::class => [Sensors\Cache::class, 'start'],
+                WritingKey::class => [Sensors\Cache::class, 'start'],
+                WritingManyKeys::class => [Sensors\Cache::class, 'start'],
+                ForgettingKey::class => [Sensors\Cache::class, 'start'],
+                JobQueueing::class => [Sensors\Jobs::class, 'startDispatch'],
+                JobQueued::class => [Sensors\Jobs::class, 'recordDispatch'],
+            ] as $event => [$sensor, $method]) {
+                $this->app['events']->listen($event, function ($event) use ($sensor, $method) {
+                    try {
+                        $this->app->make($sensor)->$method($event);
+                    } catch (Throwable) {
+                    }
+                });
+            }
             $this->callAfterResolving(ExceptionHandler::class, function ($handler) {
                 try {
                     $handler->reportable(function (Throwable $exception) {
@@ -163,7 +249,15 @@ class DecisionsServiceProvider extends ServiceProvider
                     }
                 });
             }
-            foreach ([CommandFinished::class, 'Laravel\\Octane\\Events\\RequestTerminated'] as $event) {
+            $this->app['events']->listen('Laravel\\Octane\\Events\\RequestTerminated', function ($event) {
+                try {
+                    $app = $event->sandbox ?? $this->app;
+                    $app->make(RequestLifecycle::class)->finish();
+                    $app->make(Recorder::class)->flush();
+                } catch (Throwable) {
+                }
+            });
+            foreach ([CommandFinished::class] as $event) {
                 $this->app['events']->listen($event, $flush);
             }
         } catch (Throwable) {

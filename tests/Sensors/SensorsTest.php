@@ -4,6 +4,7 @@ namespace DecisionsAi\Laravel\Tests\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
 use DecisionsAi\Laravel\Redactor;
+use DecisionsAi\Laravel\RequestLifecycle;
 use DecisionsAi\Laravel\Sensors\Exceptions;
 use DecisionsAi\Laravel\Tests\TestCase;
 use GuzzleHttp\Psr7\Request as PsrRequest;
@@ -367,6 +368,7 @@ class SensorsTest extends TestCase
             }
         };
         Event::dispatch(new RequestHandled($request, response('ok')));
+        app(RequestLifecycle::class)->finish(false);
         $this->assertSame('/pay?api_key=[redacted]&access_token=[redacted]&safe=visible', $this->records('request')[0]['path']);
     }
 

@@ -3,10 +3,12 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use DecisionsAi\Laravel\RequestLifecycle;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Queue\Events\JobQueueing;
 use Illuminate\Queue\Events\JobReleasedAfterException;
 use Throwable;
 use WeakMap;
@@ -17,7 +19,42 @@ class Jobs
 
     private ?WeakMap $recorded = null;
 
-    public function __construct(private Recorder $recorder, private Exceptions $exceptions) {}
+    private ?WeakMap $contexts = null;
+
+    public function __construct(private Recorder $recorder, private Exceptions $exceptions, private RequestLifecycle $lifecycle) {}
+
+    public function startDispatch(JobQueueing $event): void
+    {
+        try {
+            $this->lifecycle->remember($this->dispatchKey($event));
+        } catch (Throwable) {
+        }
+    }
+
+    public function recordDispatch(JobQueued $event): void
+    {
+        try {
+            $context = $this->lifecycle->take($this->dispatchKey($event));
+            if ($context === []) {
+                return;
+            }
+            $this->recorder->record([
+                't' => 'job',
+                'ms' => max(0, $this->lifecycle->context()['offset_ms'] - $context['offset_ms']),
+                'class' => is_object($event->job) ? get_class($event->job) : ($event->payload()['displayName'] ?? 'unknown'),
+                'queue' => $event->queue,
+                'attempt' => 0,
+                'status' => 'queued',
+                ...$context,
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
+    private function dispatchKey(JobQueueing|JobQueued $event): string
+    {
+        return 'job:'.hash('sha256', serialize([$event->connectionName, $event->queue, $event->payload]));
+    }
 
     public function start(JobQueued|JobProcessing $event): void
     {
@@ -25,6 +62,8 @@ class Jobs
             if (is_object($event->job)) {
                 $this->started ??= new WeakMap;
                 $this->started[$event->job] = microtime(true);
+                $this->contexts ??= new WeakMap;
+                $this->contexts[$event->job] = [$this->recorder->traceId(), $this->lifecycle->context()];
                 $this->recorded ??= new WeakMap;
                 unset($this->recorded[$event->job]);
             }
@@ -49,8 +88,15 @@ class Jobs
                 default => 'processed',
             };
             $this->recorded[$event->job] = true;
+            $this->contexts ??= new WeakMap;
+            [$trace, $context] = $this->contexts[$event->job] ?? [null, []];
+            unset($this->contexts[$event->job]);
+            if ($trace !== $this->recorder->traceId()) {
+                $context = [];
+            }
             $this->recorder->record([
                 't' => 'job',
+                ...$context,
                 'ms' => max(0, (microtime(true) - $started) * 1000),
                 'class' => $event->job->resolveName(),
                 'queue' => $event->job->getQueue(),

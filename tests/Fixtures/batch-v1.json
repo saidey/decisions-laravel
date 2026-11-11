@@ -1,9 +1,9 @@
 {"v":1,"environment":"production","deploy":"a1b2c3","server":"web-1","records":[
- {"t":"request","trace":"uuid","at":1762761600.123,"ms":41.2,"method":"GET","route":"/orders/{order}","path":"/orders/9","status":200,"user":"42"},
+ {"t":"request","trace":"uuid","at":1762761600.123,"ms":41.2,"started_at":1762761600.0818,"lifecycle_total_ms":43.0,"phases":[],"method":"GET","route":"/orders/{order}","path":"/orders/9","status":200,"user":"42"},
  {"t":"job","trace":"uuid","at":1762761600.123,"ms":0,"class":"App\\Jobs\\Sync","queue":"default","attempt":1,"status":"processed|failed|released"},
  {"t":"command","trace":"uuid","at":1762761600.123,"ms":0,"name":"orders:sync","exit":0},
  {"t":"task","trace":"uuid","at":1762761600.123,"ms":0,"command":"orders:sync","cron":"*/5 * * * *","status":"ok|failed"},
- {"t":"query","trace":"uuid","at":1762761600.123,"ms":0,"sql":"select * from orders where id = ?","connection":"mysql","file":"app/Http/Controllers/OrderController.php","line":31},
+ {"t":"query","trace":"uuid","at":1762761600.123,"ms":0,"sql":"select * from orders where id = ?","connection":"mysql","connection_type":"mysql","file":"app/Http/Controllers/OrderController.php","line":31},
  {"t":"cache","trace":"uuid","at":1762761600.123,"ms":0,"key":"orders:9","op":"hit|miss|write|forget","store":"redis"},
  {"t":"mail","trace":"uuid","at":1762761600.123,"ms":0,"class":"App\\Mail\\Invoice","to_count":1},
  {"t":"notification","trace":"uuid","at":1762761600.123,"ms":0,"class":"App\\Notifications\\Paid","channel":"mail"},

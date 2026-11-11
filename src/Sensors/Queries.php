@@ -3,12 +3,13 @@
 namespace DecisionsAi\Laravel\Sensors;
 
 use DecisionsAi\Laravel\Recorder;
+use DecisionsAi\Laravel\RequestLifecycle;
 use Illuminate\Database\Events\QueryExecuted;
 use Throwable;
 
 class Queries
 {
-    public function __construct(private Recorder $recorder) {}
+    public function __construct(private Recorder $recorder, private RequestLifecycle $lifecycle) {}
 
     public function handle(QueryExecuted $event): void
     {
@@ -30,6 +31,8 @@ class Queries
                 'ms' => (float) $event->time,
                 'sql' => config('decisions.capture.bindings', false) ? $event->toRawSql() : $event->sql,
                 'connection' => $event->connectionName,
+                'connection_type' => $event->connection->getDriverName(),
+                ...$this->lifecycle->context((float) $event->time),
                 'file' => $file,
                 'line' => $line,
             ]);

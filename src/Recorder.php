@@ -50,7 +50,7 @@ class Recorder
         }
     }
 
-    public function record(array $record): void
+    public function record(array $record, ?string $trace = null): void
     {
         try {
             if (! $this->enabled || $this->flushing || $this->ignoreCurrentTrace()) {
@@ -63,6 +63,9 @@ class Recorder
                 $this->records = [];
                 $this->recordBytes = 0;
 
+                return;
+            }
+            if ($type === 'job' && ($record['status'] ?? null) === 'queued' && $this->matchesIgnore('jobs', $record['class'] ?? '')) {
                 return;
             }
             if ($type === 'exception') {
@@ -78,7 +81,7 @@ class Recorder
             }
 
             if (($record['t'] ?? null) !== 'schedule') {
-                $record['trace'] = $this->trace;
+                $record['trace'] = $trace ?? $this->trace;
             }
             $record['at'] = (float) ($record['at'] ?? microtime(true));
             $record = $this->redactor->redact($record);

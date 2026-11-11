@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Measure request lifecycle phases with monotonic offsets, cold-request bootstrap timing, and sparse phases where framework boundaries are unavailable. Defer each request record until termination; retain a partial-record fallback for missing termination.
+- Add request-relative start offsets and phase identities to queries, outgoing HTTP, cache operations and job dispatches. Queries include the connection driver; request-scoped queue dispatch records use job status `queued`.
+- Reset lifecycle state for long-lived workers. Sending is a framework handoff envelope on the canonical HTTP kernel, not network transfer latency; unverified Octane sending boundaries are omitted.
+
 ## 0.1.4
 
 - Mask URL query values by name pattern as well as known field names: any parameter whose name mentions password, secret, token, key, credential, auth, signature, session, cookie or jwt, plus `code`, `state`, `otp`, `pin`, `nonce`, `expires` and `sig`.
