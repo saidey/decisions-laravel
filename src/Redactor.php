@@ -178,7 +178,7 @@ class Redactor
         return ($prefix !== '' ? $prefix.':' : '').substr(hash_hmac('sha256', $key, $salt), 0, 12);
     }
 
-    private function redactArray(array $values, int $depth, int &$bytes, bool $log = false, bool $scrubValues = false): array
+    private function redactArray(array $values, int $depth, int &$bytes, bool $log = false, bool $scrubValues = false, bool $input = false): array
     {
         if ($depth > 10) {
             throw new RuntimeException('Monitoring record exceeds the redaction depth limit.');
@@ -195,10 +195,13 @@ class Redactor
                 continue;
             }
 
-            if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)) {
+            // User input (request bodies) can name credentials anything: new_password, client_secret, card_number.
+            if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)
+                || ($input && preg_match('~password|passwd|secret|token|key|credential|auth|signature|session|cookie|jwt|card|cvv|cvc|iban|pin|otp~', $name))) {
                 $value = '[REDACTED]';
             } else {
                 $scrub = $scrubValues || in_array($name, ['context', 'source'], true);
+                $nested = $input || ($depth === 0 && in_array($name, ['payload', 'body'], true));
                 if (is_object($value)) {
                     $value = match (true) {
                         $value instanceof JsonSerializable => $value->jsonSerialize(),
@@ -207,14 +210,14 @@ class Redactor
                     };
                     // Serializers can return another object, including themselves.
                     if (is_object($value)) {
-                        $value = $this->redactArray(['value' => $value], $depth + 1, $bytes, false, $scrub)['value'];
+                        $value = $this->redactArray(['value' => $value], $depth + 1, $bytes, false, $scrub, $nested)['value'];
                     }
                 }
                 if ($name === 'user' && is_array($value) && ! ($this->config['user_details'] ?? false)) {
                     $value = array_intersect_key($value, ['id' => true]);
                 }
                 if (is_array($value)) {
-                    $value = $this->redactArray($value, $depth + 1, $bytes, false, $scrub);
+                    $value = $this->redactArray($value, $depth + 1, $bytes, false, $scrub, $nested);
                 } elseif (is_string($value)) {
                     if ($name === 'message' || $scrub) {
                         $value = $this->scrubValue($value);

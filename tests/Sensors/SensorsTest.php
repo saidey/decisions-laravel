@@ -234,12 +234,15 @@ class SensorsTest extends TestCase
         app()->forgetInstance(Recorder::class);
         app()->forgetInstance(RequestLifecycle::class);
         app()->forgetInstance(Requests::class);
-        Event::dispatch(new RequestHandled(ServerRequest::create('/orders', 'POST', ['item' => 'tea', 'password' => 'secret']), response('ok')));
+        Event::dispatch(new RequestHandled(ServerRequest::create('/orders', 'POST', ['item' => 'tea', 'password' => 'secret', 'current_password' => 'old', 'new_password' => 'new',
+            'card' => ['card_number' => '4111111111111111', 'cvv' => '123'], 'client_secret' => 'cs', 'access_token' => 'at', 'otp_code' => '999']), response('ok')));
         app(RequestLifecycle::class)->finish(false);
         $payload = $this->records('request')[1]['payload'];
 
         $this->assertSame('tea', $payload['item']);
-        $this->assertSame('[REDACTED]', $payload['password']);
+        foreach (['password', 'current_password', 'new_password', 'card', 'client_secret', 'access_token', 'otp_code'] as $field) {
+            $this->assertSame('[REDACTED]', $payload[$field], $field);
+        }
     }
 
     public function test_query_records_application_callsite_without_a_database(): void
