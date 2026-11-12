@@ -16,6 +16,7 @@ use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
@@ -42,7 +43,7 @@ use Throwable;
 
 class DecisionsServiceProvider extends ServiceProvider
 {
-    public const VERSION = '0.2.4';
+    public const VERSION = '0.3.0';
 
     public function register(): void
     {
@@ -114,6 +115,17 @@ class DecisionsServiceProvider extends ServiceProvider
     {
         try {
             $this->publishes([__DIR__.'/../config/decisions.php' => config_path('decisions.php')], 'decisions-config');
+
+            if ($this->app['config']->get('decisions.security.enforce', false)) {
+                $this->app->singleton(SecurityResponse::class);
+                $this->callAfterResolving(Kernel::class, fn ($kernel) => $kernel->prependMiddleware(Http\BlockList::class));
+                $this->app->booted(function () {
+                    $this->callAfterResolving(Schedule::class, function ($schedule) {
+                        $schedule->call(fn () => $this->app->make(SecurityResponse::class)->refresh())
+                            ->name('decisions:security')->everyMinute();
+                    });
+                });
+            }
 
             $flush = function () {
                 try {

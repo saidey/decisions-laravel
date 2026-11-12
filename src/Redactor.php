@@ -117,11 +117,94 @@ class Redactor
 
     public function exceptionMessage(Throwable $exception, bool $bindings = false): string
     {
-        $message = $exception instanceof QueryException && ! $bindings
-            ? $exception->getSql().' (driver code: '.($exception->errorInfo[1] ?? $exception->getCode()).')'
-            : $exception->getMessage();
+        $message = $exception->getMessage();
+        if ($exception instanceof QueryException) {
+            // Driver messages can repeat raw bindings, even when the SQL itself is masked.
+            $message = $exception->getSql();
+            if ($bindings) {
+                $message .= ' (bindings: '.json_encode($this->queryBindings($exception->getSql(), $exception->getBindings()), JSON_THROW_ON_ERROR).')';
+            }
+            $message .= ' (driver code: '.($exception->errorInfo[1] ?? $exception->getCode()).')';
+        }
 
         return $this->scrubValue($message);
+    }
+
+    public function queryBindings(string $sql, array $bindings): array
+    {
+        $columns = config('decisions.capture.bindings_strings', $this->config['capture']['bindings_strings'] ?? 'masked') === 'scrubbed'
+            ? $this->bindingColumns($sql) : null;
+
+        foreach ($bindings as $index => &$value) {
+            if (! is_string($value)) {
+                continue;
+            }
+            $value = match (true) {
+                $columns === null => is_numeric($value) ? $value : '?',
+                isset($columns[$index]) && $this->sensitiveField($columns[$index]) => '[redacted]',
+                (bool) preg_match('~^\$(2[abxy]|argon2i?d?)\$~', $value) => '[redacted]',
+                default => $this->scrubValue($value),
+            };
+        }
+        unset($value);
+
+        return $bindings;
+    }
+
+    private function sensitiveField(string $name): bool
+    {
+        $name = strtolower($name);
+
+        return in_array($name, $this->fields, true) || in_array($name, $this->headers, true)
+            || (bool) preg_match('~pass|pwd|secret|token|key|credential|auth|signature|session|cookie|jwt|card|cvv|cvc|iban|pin|otp|ssn|^cc|_cc|pan$|account|routing|recovery|code~', $name)
+            || (bool) preg_match('~nationalid|passport|idnumber|idno|idcard|identitynumber|nic|tin|taxid|drivinglicence|drivinglicense|licencenumber|licensenumber~', preg_replace('~[^a-z0-9]~', '', $name));
+    }
+
+    private function bindingColumns(string $sql): array
+    {
+        // Keep offsets while removing literals, comments and escaped question marks.
+        $sql = preg_replace_callback('~\x27(?:\\\\.|\x27\x27|[^\x27\\\\])*\x27|\$(\w*)\$.*?\$\1\$|--[^\r\n]*|/\*.*?\*/|\?\?~s', fn ($match) => str_repeat(' ', strlen($match[0])), $sql);
+        $identifier = '(?:[a-z_][a-z0-9_$]*|`[^`]+`|"[^"]+"|\[[^\]]+\])';
+        $column = $identifier.'(?:\s*\.\s*'.$identifier.')*';
+        $name = fn ($value) => trim(trim(substr($value, strrpos($value, '.') === false ? 0 : strrpos($value, '.') + 1)), '`"[]');
+        preg_match_all('~\?~', $sql, $placeholders, PREG_OFFSET_CAPTURE);
+        $indices = array_flip(array_column($placeholders[0], 1));
+        $columns = [];
+        preg_match_all('~('.$column.')\s*(?:=|<>|!=|<=|>=|<|>|(?:not\s+)?like)\s*(\?)~i', $sql, $comparisons, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($comparisons as $comparison) {
+            $columns[$indices[$comparison[2][1]]] = $name($comparison[1][0]);
+        }
+        preg_match_all('~('.$column.')\s+(?:not\s+)?in\s*\(([^()]*)\)~i', $sql, $lists, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($lists as $list) {
+            preg_match_all('~\?~', $list[2][0], $items, PREG_OFFSET_CAPTURE);
+            foreach ($items[0] as $item) {
+                $columns[$indices[$list[2][1] + $item[1]]] = $name($list[1][0]);
+            }
+        }
+        preg_match_all('~\binsert(?:\s+or\s+\w+)?\s+into\s+'.$column.'\s*\(([^()]*)\)\s*values\s*~i', $sql, $inserts, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($inserts as $insert) {
+            $names = array_map($name, explode(',', $insert[1][0]));
+            $depth = 0;
+            $position = 0;
+            for ($offset = $insert[0][1] + strlen($insert[0][0]); $offset < strlen($sql); $offset++) {
+                $char = $sql[$offset];
+                if ($char === '(') {
+                    $depth++;
+                } elseif ($char === ')') {
+                    $depth--;
+                } elseif ($char === ',' && $depth === 1) {
+                    $position++;
+                } elseif ($char === '?' && $depth > 0 && isset($names[$position])) {
+                    $columns[$indices[$offset]] = $names[$position];
+                } elseif ($depth === 0 && $char === ',') {
+                    $position = 0;
+                } elseif ($depth === 0 && ! ctype_space($char)) {
+                    break;
+                }
+            }
+        }
+
+        return $columns;
     }
 
     public function scrubValue(string $value): string
@@ -141,14 +224,16 @@ class Redactor
             '\bBearer\s+[a-z0-9._\~+/-]+=*',
             '\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b',
             '[a-z0-9.!#$%&\x27*+/=?^_`{|}\~-]+@[a-z0-9.-]+\.[a-z]{2,}',
+            '(?<uuid>\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b)',
             '(?<![a-z0-9+/_-])[a-z0-9+/_-]{32,}={0,2}(?![a-z0-9+/_-])',
+            '\b(?:A\d{6}|[a-z]\d{7})\b',
             // Phone-shaped digit runs (7+ digits, single space/dash separators). Not ISO dates or digits inside identifiers.
             '(?<![\w.-])(?!\d{4}-\d{2}-\d{2}(?!\d))\+?\d(?:[ -]?\d){6,}(?![\w-]|\.\d)',
         ];
 
-        return preg_replace_callback('~'.implode('|', $patterns).'~i', fn ($match) => isset($match['prefix']) && $match['prefix'] !== ''
+        return preg_replace_callback('~'.implode('|', $patterns).'~i', fn ($match) => ! empty($match['uuid']) ? $match['uuid'] : (isset($match['prefix']) && $match['prefix'] !== ''
             ? $match['prefix'].$match['quote'].'[REDACTED]'.$match['quote']
-            : '[REDACTED]', $value) ?? '[REDACTED]';
+            : '[REDACTED]'), $value) ?? '[REDACTED]';
     }
 
     private function redactCacheKey(string $key, ?string $store): string
@@ -197,7 +282,7 @@ class Redactor
 
             // User input (request bodies) can name credentials anything: new_password, client_secret, card_number.
             if (in_array($name, $this->fields, true) || in_array($name, $this->headers, true)
-                || ($input && preg_match('~pass|pwd|secret|token|key|credential|auth|signature|session|cookie|jwt|card|cvv|cvc|iban|pin|otp|ssn|^cc|_cc|pan$|account|routing|recovery|code~', $name))) {
+                || ($input && $this->sensitiveField($name))) {
                 $value = '[REDACTED]';
             } else {
                 $scrub = $scrubValues || in_array($name, ['context', 'source'], true);

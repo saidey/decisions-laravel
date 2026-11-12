@@ -24,8 +24,12 @@ Optional configuration:
 | `DECISIONS_ENVIRONMENT` | `app.env` | Environment label. |
 | `DECISIONS_DEPLOY` | Unset | Deployment identifier, such as a commit SHA. |
 | `DECISIONS_USER_DETAILS` | `false` | Allow user names and email addresses alongside IDs. |
+| `DECISIONS_CAPTURE_BINDING_STRINGS` | `masked` | With binding capture enabled, mask non-numeric strings as `?`; use `scrubbed` for column-aware redaction and value scrubbing. |
+| `DECISIONS_CAPTURE_PAYLOAD_EXCEPT` | Empty | Comma-separated request path patterns whose payloads are excluded, such as `bank/*,hr/*,api/identity/*`. |
 | `DECISIONS_CAPTURE_CACHE_KEYS` | `false` | Capture scrubbed cache keys instead of hashed keys; session keys remain hashed. |
 | `DECISIONS_SECURITY_CAPTURE` | `false` | Enable security signals, hourly posture, and request IP/user agent capture. |
+| `DECISIONS_SECURITY_ENFORCE` | `false` | Enable cached IP blocking and approved response commands. |
+| `DECISIONS_SECURITY_IP_HEADER` | Unset | Trusted platform header to use for enforcement IPs; otherwise use `$request->ip()`. |
 
 Publish the configuration to adjust privacy, buffer size, sampling, and ignore lists:
 
@@ -67,13 +71,36 @@ Posture reports app debug/environment, secure-session-cookie configuration, HTTP
 
 Path, command and job patterns support `*`. Paths match without the query string, with or without a leading slash. Ignoring a request, command or processing job suppresses its trace, including logs, queries and exceptions. An ignored synchronous job suppresses only that job's records and restores its parent request or command trace afterward. Jobs inside ignored requests remain ignored. Ignored exception classes also match subclasses; they suppress exception records only.
 
-Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). Query exceptions and logs with query exception context send SQL with placeholders and the driver error code; already stringified database errors without exception context send a generic redacted summary. Interpolated error messages require `capture.bindings=true`. Exception and log messages and all nested context strings mask email addresses, phone-shaped values (7+ digits, including spaces or dashes), bearer tokens, JWT-shaped values, long hex/base64 strings (32+ characters), and credential pairs such as `password=…` and `token=…`. Numeric values remain numeric. Absolute URLs in these strings also have credentials, sensitive query parameters (including signed URL signatures and expiry), and secret path segments redacted.
+Request bodies and query bindings are excluded by default (`capture.payloads=false`, `capture.bindings=false`). When enabling payloads, set `capture.payload_except` to an array such as `['bank/*', 'hr/*', 'api/identity/*']`, or use `DECISIONS_CAPTURE_PAYLOAD_EXCEPT=bank/*,hr/*,api/identity/*`. Patterns use Laravel's `Request::is()` syntax and omit the leading slash. Matching requests still produce request events, with no payload.
+
+With binding capture enabled, `capture.bindings_strings` defaults to `masked` (`DECISIONS_CAPTURE_BINDING_STRINGS`): every non-numeric string binding becomes `?`. Set it to `scrubbed` to retain ordinary strings while masking bindings compared to or inserted into sensitive columns, including comparisons, `IN` lists, inserts and updates. Unknown column contexts fall back to value scrubbing. Numbers, booleans and nulls are retained. Query exceptions and logs with query exception context use the same sanitized bindings alongside the SQL template and driver error code; raw driver messages are excluded. Already stringified database errors without exception context always send a generic redacted summary.
+
+Payload field matching also masks identity-document names, including national IDs, passports, identity/card numbers, NIC, TIN/tax IDs and driving licence/license numbers, including normalized and nested names. Plain `id`, `user_id` and `team_id` remain available. Exception and log messages and all nested context strings mask Maldivian national IDs (`A123456`) and passport numbers (one letter and seven digits) as whole tokens, email addresses, phone-shaped values (7+ digits, including spaces or dashes), bearer tokens, JWT-shaped values, long hex/base64 strings (32+ characters), and credential pairs such as `password=…` and `token=…`. UUIDs and references such as `INV-123456` remain available. Numeric values remain numeric. Absolute URLs in these strings also have credentials, sensitive query parameters (including signed URL signatures and expiry), and secret path segments redacted.
 
 Cache keys are private by default (`capture.cache_keys=false`). Records keep only a scrub-safe prefix before the first `:` and the first 12 hex characters of an HMAC-SHA256 of the full key, salted with `app.key`, such as `phone-code:3f9a1c0b2d4e`. Grouping stays stable within an app until its key changes. If `app.key` is unset, keys are fully redacted. Set `DECISIONS_CAPTURE_CACHE_KEYS=true` to capture keys with value scrubbing applied. Keys from the configured session cache store, 40-character alphanumeric session-shaped keys, and keys beginning with the configured session cookie or prefix always use the hashed form without a prefix.
 
 Matched incoming requests send the route template as both `route` and `path`, without actual route parameters. Unmatched incoming paths and outgoing URL paths replace secret-shaped segments (including 24+ character tokens and Telegram bot credentials) with `{redacted}`. URL user credentials and sensitive query parameters are redacted. Scheduled inventory and run records send only the Artisan command name, executable basename, or explicit shell/callback task description; arguments and options are excluded.
 
 Exception source context is opt-in (`capture.source=false` by default; set `DECISIONS_CAPTURE_SOURCE=true` to enable it). Only canonical files inside the application base directory and outside vendor directories are read. Symlinks outside that boundary are excluded. Captured source lines use the same value scrubbing as messages, including quoted values assigned to sensitive keys. Sensitive fields and headers are recursively masked as `[REDACTED]`, case insensitively. User IDs are captured when available; names and emails require `DECISIONS_USER_DETAILS=true`. Serializable and Arrayable objects are normalized before redaction; other objects expose only their class. Recursion stops at depth 10. Review redaction lists, task descriptions, and capture settings before enabling optional data. Pattern matching cannot recognize every secret; avoid putting sensitive values in messages or descriptions.
+
+## Security response enforcement
+
+Enforcement is independently opt-in with `DECISIONS_SECURITY_ENFORCE=true`. It prepends `DecisionsAi\Laravel\Http\BlockList` to the global middleware stack before sessions and auth. Exact IPv4/IPv6 addresses and CIDRs are checked only against the default configured cache store. Invalid entries, IPv4 ranges broader than /16, and IPv6 ranges broader than /32 are dropped while valid feed entries are retained. Expired blocks are ignored, and cache failures allow requests through. Blocked requests return plain-text `403 Forbidden` without running later middleware, setting session cookies, or recording request/security events. Use a shared non-database cache with lock support, such as Redis, to keep checks free of database access; a database-backed cache itself queries the database.
+
+Apps on DigitalOcean App Platform must set `DECISIONS_SECURITY_IP_HEADER=do-connecting-ip`. Configure a header only when your platform overwrites it with a trusted client IP. Enforcement validates the trimmed first value and falls back to `$request->ip()` if it is invalid; arbitrary headers are ignored by default. This middleware runs before Laravel's proxy middleware, so configure the platform header when needed.
+
+The client pulls `GET /ingest/v1/security` and acknowledges commands through `POST /ingest/v1/security/commands/{id}` using `DECISIONS_URL`, the environment bearer token, and the same one-second connection/total timeouts as ingest. There is no inbound command endpoint. Run Laravel's scheduler for minute refreshes; request termination also refreshes stale data after the response is sent. Refresh defaults to 60 seconds and honors the server's `refresh` interval. A cache lock prevents concurrent refreshes. Fetch failures keep the previous list, whose entries remain subject to their server-supplied `expires_at` timestamps (normally 24 hours).
+
+Configure application-specific handlers in `security.handlers`:
+
+```php
+'handlers' => [
+    'logout_user' => App\Security\LogoutUser::class, // Optional callable or invokable class.
+    'disable_user' => App\Security\DisableUser::class, // Required invokable class to disable users.
+],
+```
+
+Each handler receives the string user ID, for example `public function __invoke(string $userId): void`. `logout_user` deletes that user's database sessions when `session.driver=database`, rotates the default auth provider model's remember token when its column exists, and also invokes the configured logout handler. Both `logout_user` and `disable_user` delete the default auth provider user's tokens before acknowledging completion when the model has a `tokens()` relation, such as Laravel Sanctum's `HasApiTokens`; models without that relation are supported. Use the logout handler to revoke sessions or tokens managed elsewhere. `disable_user` requires your handler to disable the account; without one it acknowledges failure. Commands execute only when their age is less than 600 seconds; age 600 seconds or more is stale. Unknown types are rejected as unsupported. IDs are reserved in the default configured cache store before execution, and results, including failures, are cached for 15 minutes. Repeated IDs resend the cached acknowledgement without executing again, so a lost acknowledgement can be retried. Exceptions produce a short failed acknowledgement without exporting exception details. When enforcement is off, neither middleware nor refresh scheduling is registered and no security fetches occur.
 
 ## Sensors and recording
 
@@ -103,4 +130,4 @@ vendor/bin/phpunit
 vendor/bin/pint src config tests
 ```
 
-Tests use HTTP fakes and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use a database. GitHub Actions runs the suite on Laravel 13 / Testbench 11 with PHP 8.3 and 8.4.
+Tests use HTTP fakes, isolated in-memory SQLite for response commands, and loopback sockets, including a real server that accepts a connection without sending a response. They do not call decisions.site or use an application database. GitHub Actions runs the suite on Laravel 13 / Testbench 11 with PHP 8.3 and 8.4.

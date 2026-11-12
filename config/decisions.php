@@ -10,6 +10,12 @@ return [
 
     'security' => [
         'capture' => env('DECISIONS_SECURITY_CAPTURE', false),
+        'enforce' => env('DECISIONS_SECURITY_ENFORCE', false),
+        'ip_header' => env('DECISIONS_SECURITY_IP_HEADER'),
+        'handlers' => [
+            'logout_user' => null,
+            'disable_user' => null,
+        ],
         'probes' => ['/.env', '/.git', '/wp-admin', '/wp-login.php', '/xmlrpc.php', 'phpmyadmin', '/vendor/phpunit', '../', '/.aws', '/server-status', '/actuator', '/cgi-bin'],
         // null: Sanctum's configured token model, read after boot so Sanctum::usePersonalAccessTokenModel() applies.
         'token_models' => null,
@@ -48,7 +54,9 @@ return [
     'capture' => [
         'cache_keys' => env('DECISIONS_CAPTURE_CACHE_KEYS', false),
         'payloads' => false,
+        'payload_except' => array_values(array_filter(array_map('trim', explode(',', env('DECISIONS_CAPTURE_PAYLOAD_EXCEPT', ''))))),
         'bindings' => false,
+        'bindings_strings' => env('DECISIONS_CAPTURE_BINDING_STRINGS', 'masked'),
         'source' => env('DECISIONS_CAPTURE_SOURCE', false),
     ],
 ];

@@ -213,7 +213,7 @@ class SensorsTest extends TestCase
 
     public function test_inlined_bindings_are_scrubbed_and_password_hashes_masked(): void
     {
-        config(['decisions.capture.bindings' => true]);
+        config(['decisions.capture.bindings' => true, 'decisions.capture.bindings_strings' => 'scrubbed']);
         $connection = new Connection(new \PDO('sqlite::memory:'), 'database', '', ['name' => 'mysql']);
         Event::dispatch(new QueryExecuted('select * from users where email = ? and password = ? and id = ?', ['aisha@example.test', '$2y$12$abcdefghijklmnopqrstuuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012', 42], 1, $connection));
         $sql = $this->records('query')[0]['sql'];

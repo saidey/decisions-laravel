@@ -15,11 +15,7 @@ class Queries
     // Inline bindings only after scrubbing them: emails, tokens, phone numbers and password hashes never leave as SQL text.
     private function sql(QueryExecuted $event): string
     {
-        $bindings = array_map(fn ($value) => match (true) {
-            ! is_string($value) => $value,
-            (bool) preg_match('~^\$(2[abxy]|argon2i?d?)\$~', $value) => '[redacted]',
-            default => $this->redactor->scrubValue($value),
-        }, $event->connection->prepareBindings($event->bindings));
+        $bindings = $this->redactor->queryBindings($event->sql, $event->connection->prepareBindings($event->bindings));
 
         return $event->connection->query()->getGrammar()->substituteBindingsIntoRawSql($event->sql, $bindings);
     }
