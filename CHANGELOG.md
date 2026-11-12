@@ -2,6 +2,10 @@
 
 ## 0.3.0 (unreleased)
 
+- Redact identity-document payload fields and whole-token Maldivian national ID/passport values while retaining foreign-key IDs, UUIDs and invoice references.
+- Default captured string bindings to `?` with `capture.bindings_strings` / `DECISIONS_CAPTURE_BINDING_STRINGS`; opt into `scrubbed` for sensitive-column masking across comparisons, IN lists, inserts and updates, with value scrubbing as fallback. Rebuild query exception summaries from sanitized bindings and exclude raw driver messages and stringified query errors.
+- Add `capture.payload_except` / `DECISIONS_CAPTURE_PAYLOAD_EXCEPT` path patterns to exclude request payloads while retaining request events.
+
 - Add opt-in cached IPv4/IPv6 and CIDR blocking before other global middleware, with minute scheduling and locked refresh after responses.
 - Drop invalid block entries and IPv4 CIDRs broader than /16 or IPv6 CIDRs broader than /32 while retaining valid feed entries.
 - Pull approved response commands using the environment token; reject commands aged 600 seconds or more and acknowledge stale, unsupported, failed and completed actions. Cache command results for 15 minutes and resend acknowledgements for repeated IDs without executing again.

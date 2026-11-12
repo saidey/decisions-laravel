@@ -92,7 +92,7 @@ class SecurityFixTest extends TestCase
 
     public function test_query_binding_opt_in_keeps_interpolated_message_but_still_scrubs_values(): void
     {
-        config(['decisions.capture.bindings' => true]);
+        config(['decisions.capture.bindings' => true, 'decisions.capture.bindings_strings' => 'scrubbed']);
         $exception = new QueryException('mysql', 'select ?, ?', ['ordinary-value', 'alice@example.test'], new PDOException('driver failure', 7));
         app(Exceptions::class)->handle($exception);
         Log::channel('security')->error($exception->getMessage(), ['exception' => $exception]);

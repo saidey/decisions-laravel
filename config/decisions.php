@@ -54,7 +54,9 @@ return [
     'capture' => [
         'cache_keys' => env('DECISIONS_CAPTURE_CACHE_KEYS', false),
         'payloads' => false,
+        'payload_except' => array_values(array_filter(array_map('trim', explode(',', env('DECISIONS_CAPTURE_PAYLOAD_EXCEPT', ''))))),
         'bindings' => false,
+        'bindings_strings' => env('DECISIONS_CAPTURE_BINDING_STRINGS', 'masked'),
         'source' => env('DECISIONS_CAPTURE_SOURCE', false),
     ],
 ];

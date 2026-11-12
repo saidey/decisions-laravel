@@ -36,7 +36,7 @@ class Requests
                     ...$security,
                     ...$this->users->identity(true, email: false),
                     // Redactor masks credential fields and caps the size; files are never sent.
-                    ...(config('decisions.capture.payloads', false) ? ['payload' => $request->except(array_keys($request->allFiles()))] : []),
+                    ...(config('decisions.capture.payloads', false) && ! $request->is(config('decisions.capture.payload_except', [])) ? ['payload' => $request->except(array_keys($request->allFiles()))] : []),
                 ];
             });
         } catch (Throwable) {

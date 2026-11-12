@@ -53,7 +53,7 @@ class Logs
             $message = $record->message;
             if ($exception instanceof QueryException) {
                 $message = $this->redactor->exceptionMessage($exception, $bindings);
-            } elseif (! $bindings && str_contains($message, '(Connection: ') && str_contains($message, 'SQL: ')) {
+            } elseif (str_contains($message, '(Connection: ') && str_contains($message, 'SQL: ')) {
                 // A stringified query exception no longer exposes its SQL template.
                 $message = 'Database query failed [REDACTED]';
             }
