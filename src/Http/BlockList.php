@@ -49,6 +49,11 @@ class BlockList
         [$network, $prefix] = array_pad(explode('/', $value, 2), 2, null);
         $address = @inet_pton($ip);
         $network = @inet_pton($network);
+        // A proxy may report IPv4 clients as ::ffff:a.b.c.d; compare them as IPv4.
+        if ($address !== false && strlen($address) === 16 && $network !== false && strlen($network) === 4
+            && str_starts_with($address, str_repeat("\0", 10)."\xff\xff")) {
+            $address = substr($address, 12);
+        }
         if ($address === false || $network === false || strlen($address) !== strlen($network)) {
             return false;
         }

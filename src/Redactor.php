@@ -140,7 +140,8 @@ class Redactor
                 continue;
             }
             $value = match (true) {
-                $columns === null => is_numeric($value) ? $value : '?',
+                // Numeric-looking strings can be OTPs, card or ID numbers; only real int/float bindings survive masked mode.
+                $columns === null => '?',
                 isset($columns[$index]) && $this->sensitiveField($columns[$index]) => '[redacted]',
                 (bool) preg_match('~^\$(2[abxy]|argon2i?d?)\$~', $value) => '[redacted]',
                 default => $this->scrubValue($value),

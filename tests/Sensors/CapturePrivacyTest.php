@@ -67,11 +67,11 @@ class CapturePrivacyTest extends TestCase
         $this->assertSame($uuid.' INV-123456', app(Redactor::class)->scrubValue($uuid.' INV-123456'));
     }
 
-    public function test_default_binding_mode_masks_strings_and_keeps_numeric_scalar_bindings(): void
+    public function test_default_binding_mode_masks_every_string_and_keeps_numeric_scalar_bindings(): void
     {
         $this->assertSame('masked', config('decisions.capture.bindings_strings'));
-        $bindings = ['ordinary-value', 'A123456', '123', 12345678, 1.5, true, false, null];
-        $this->assertSame(['?', '?', '123', 12345678, 1.5, true, false, null], app(Redactor::class)->queryBindings('select ?, ?, ?, ?, ?, ?, ?, ?', $bindings));
+        $bindings = ['ordinary-value', 'A123456', '482913', 12345678, 1.5, true, false, null];
+        $this->assertSame(['?', '?', '?', 12345678, 1.5, true, false, null], app(Redactor::class)->queryBindings('select ?, ?, ?, ?, ?, ?, ?, ?', $bindings));
         $this->recordQuery('select ?, ?, ?, ?', ['ordinary-value', 42, true, null]);
         $this->assertSame("select '?', 42, 1, null", $this->records('query')[0]['sql']);
     }
