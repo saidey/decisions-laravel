@@ -10,6 +10,7 @@ use Illuminate\Auth\Authenticatable;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Session\Middleware\StartSession;
@@ -70,9 +71,13 @@ class BlockListTest extends TestCase
         return [
             ['203.0.113.7', '203.0.113.7'],
             ['203.0.113.0/24', '203.0.113.255'],
+            ['203.0.0.0/16', '203.0.255.255'],
+            ['203.0.113.7/32', '203.0.113.7'],
             ['203.0.113.128/25', '203.0.113.129'],
             ['2001:db8::7', '2001:0db8:0:0:0:0:0:7'],
             ['2001:db8::/48', '2001:db8:0:1::7'],
+            ['2001:db8::/32', '2001:db8:ffff::7'],
+            ['2001:db8::7/128', '2001:db8::7'],
             ['2001:db8::/49', '2001:db8:0:7fff::7'],
         ];
     }
@@ -117,6 +122,10 @@ class BlockListTest extends TestCase
             ['2001:db8::/48', '2001:db8:1::7'],
             ['2001:db8::/49', '2001:db8:0:8000::7'],
             ['0.0.0.0/0', '2001:db8::7'],
+            ['0.0.0.0/0', '203.0.113.7'],
+            ['203.0.0.0/15', '203.0.113.7'],
+            ['::/0', '2001:db8::7'],
+            ['2001:db8::/31', '2001:db8::7'],
             ['2001:db8::/129', '2001:db8::7'],
             ['203.0.113.0/-1', '203.0.113.7'],
             ['invalid', '203.0.113.7'],
@@ -138,6 +147,33 @@ class BlockListTest extends TestCase
         Route::get('/allowed', fn () => 'allowed');
         $this->get('/allowed')->assertOk()->assertContent('allowed');
         $this->assertSame([], app(SecurityResponse::class)->blocks());
+    }
+
+    public function test_refresh_drops_invalid_and_overbroad_feed_entries_and_keeps_valid_blocks(): void
+    {
+        $expires = now()->timestamp + 3600;
+        $valid = [
+            ['value' => '203.0.0.0/16', 'expires_at' => $expires],
+            ['value' => '2001:db8::/32', 'expires_at' => $expires],
+            ['value' => '198.51.100.7', 'expires_at' => $expires],
+        ];
+        $invalid = [null, 'invalid', [], ['value' => [], 'expires_at' => $expires]];
+        foreach (['0.0.0.0/0', '10.0.0.0/15', '::/0', '2001:db8::/31', 'invalid',
+            '203.0.113.0/33', '2001:db8::/129', '203.0.113.0/-1', '203.0.113.0/',
+            '203.0.113.0/24/1', '203.0.113.0/abc'] as $value) {
+            $invalid[] = ['value' => $value, 'expires_at' => $expires];
+        }
+        $invalid[] = ['value' => '192.0.2.1', 'expires_at' => 'invalid'];
+        $invalid[] = ['value' => '192.0.2.2'];
+        $invalid[] = ['value' => '192.0.2.3', 'expires_at' => now()->timestamp];
+        $this->payload['blocks'] = array_merge($invalid, $valid);
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame($valid, app('cache')->store()->get(SecurityResponse::CACHE_KEY)['blocks']);
+        $this->assertSame($valid, app(SecurityResponse::class)->blocks());
+        foreach (['10.0.1.1', 'fd00::7'] as $ip) {
+            $response = app(BlockList::class)->handle(Request::create('/', server: ['REMOTE_ADDR' => $ip]), fn () => response('allowed'));
+            $this->assertSame('allowed', $response->getContent());
+        }
     }
 
     public function test_spoofed_header_is_ignored_when_header_not_configured(): void
@@ -217,19 +253,142 @@ class BlockListTest extends TestCase
         $id = $this->queueCommand($type, $age);
         app(SecurityResponse::class)->refresh();
         $this->assertAck($id, 'failed', $result);
+        $this->travel(60)->seconds();
+        app(SecurityResponse::class)->refresh();
+        $this->assertCount(2, Http::recorded(fn ($request) => $request->method() === 'POST'
+            && $request->data() === ['status' => 'failed', 'result' => $result]));
     }
 
-    public function test_replayed_command_is_not_executed_or_acknowledged_again(): void
+    public function test_replayed_command_resends_cached_ack_without_executing_and_result_expires_after_15_minutes(): void
+    {
+        $this->travelTo(now()->startOfSecond());
+        ResponseHandler::$users = [];
+        config([
+            'decisions.security.handlers.disable_user' => ResponseHandler::class,
+            'cache.default' => 'security',
+            'cache.stores.security' => ['driver' => 'array'],
+        ]);
+        $id = $this->queueCommand('disable_user');
+        app(SecurityResponse::class)->refresh();
+        $this->assertAck($id, 'done', 'done');
+        $key = 'decisions:security:command:'.$id;
+        $result = ['status' => 'done', 'result' => 'done'];
+        $this->assertSame($result, app('cache')->store('security')->get($key));
+        $this->assertNull(app('cache')->store('array')->get($key));
+        $this->travel(60)->seconds();
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame(['42'], ResponseHandler::$users);
+        $this->assertCount(2, Http::recorded(fn ($request) => $request->method() === 'POST'
+            && $request->data() === $result));
+        Http::assertSentCount(4);
+        $this->travel(839)->seconds();
+        $this->assertSame($result, app('cache')->store('security')->get($key));
+        $this->travel(1)->seconds();
+        $this->assertNull(app('cache')->store('security')->get($key));
+    }
+
+    public function test_lost_acknowledgement_is_retried_without_executing_command_again(): void
     {
         ResponseHandler::$users = [];
         config(['decisions.security.handlers.disable_user' => ResponseHandler::class]);
         $id = $this->queueCommand('disable_user');
+        $acks = [];
+        Http::fake(function ($request) use (&$acks) {
+            if ($request->method() === 'GET') {
+                return Http::response($this->payload);
+            }
+            $acks[] = $request->data();
+            if (count($acks) === 1) {
+                throw new RuntimeException('Acknowledgement lost');
+            }
+
+            return Http::response('', 202);
+        });
         app(SecurityResponse::class)->refresh();
-        $this->assertAck($id, 'done', 'done');
         $this->travel(60)->seconds();
         app(SecurityResponse::class)->refresh();
         $this->assertSame(['42'], ResponseHandler::$users);
-        Http::assertSentCount(3);
+        $this->assertSame([
+            ['status' => 'done', 'result' => 'done'],
+            ['status' => 'done', 'result' => 'done'],
+        ], $acks);
+        $this->assertAck($id, 'done', 'done');
+    }
+
+    public static function commandAges(): array
+    {
+        return [[599, 'done', ['42']], [600, 'failed', []], [601, 'failed', []]];
+    }
+
+    #[DataProvider('commandAges')]
+    public function test_commands_execute_only_when_younger_than_600_seconds(int $age, string $status, array $users): void
+    {
+        ResponseHandler::$users = [];
+        config(['decisions.security.handlers.disable_user' => ResponseHandler::class]);
+        $id = $this->queueCommand('disable_user', $age);
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame($users, ResponseHandler::$users);
+        $this->assertAck($id, $status, $status === 'done' ? 'done' : 'stale');
+    }
+
+    public static function userCommands(): array
+    {
+        return [['logout_user'], ['disable_user']];
+    }
+
+    #[DataProvider('userCommands')]
+    public function test_user_commands_revoke_only_target_users_tokens_before_handler_and_acknowledgement(string $type): void
+    {
+        $this->createUsers();
+        app('db')->connection()->getSchemaBuilder()->create('personal_access_tokens', function (Blueprint $table) {
+            $table->id();
+            $table->morphs('tokenable');
+        });
+        app('db')->table('personal_access_tokens')->insert([
+            ['tokenable_type' => TokenResponseUser::class, 'tokenable_id' => 42],
+            ['tokenable_type' => TokenResponseUser::class, 'tokenable_id' => 42],
+            ['tokenable_type' => TokenResponseUser::class, 'tokenable_id' => 43],
+        ]);
+        $called = [];
+        config([
+            'auth.providers.users.model' => TokenResponseUser::class,
+            'decisions.security.handlers.'.$type => function ($userId) use (&$called) {
+                $this->assertSame([43], app('db')->table('personal_access_tokens')->pluck('tokenable_id')->all());
+                $called[] = $userId;
+            },
+        ]);
+        $id = $this->queueCommand($type);
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame(['42'], $called);
+        $this->assertSame([43], app('db')->table('personal_access_tokens')->pluck('tokenable_id')->all());
+        $this->assertAck($id, 'done', 'done');
+    }
+
+    #[DataProvider('userCommands')]
+    public function test_user_commands_without_tokens_relation_succeed(string $type): void
+    {
+        $this->createUsers();
+        ResponseHandler::$users = [];
+        config(['decisions.security.handlers.'.$type => ResponseHandler::class]);
+        $id = $this->queueCommand($type);
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame(['42'], ResponseHandler::$users);
+        $this->assertAck($id, 'done', 'done');
+    }
+
+    #[DataProvider('userCommands')]
+    public function test_token_revocation_failure_does_not_acknowledge_done(string $type): void
+    {
+        $this->createUsers();
+        ResponseHandler::$users = [];
+        config([
+            'auth.providers.users.model' => TokenResponseUser::class,
+            'decisions.security.handlers.'.$type => ResponseHandler::class,
+        ]);
+        $id = $this->queueCommand($type);
+        app(SecurityResponse::class)->refresh();
+        $this->assertSame([], ResponseHandler::$users);
+        $this->assertAck($id, 'failed', 'command failed');
     }
 
     public function test_logout_deletes_only_user_database_sessions_cycles_remember_token_and_calls_handler(): void
@@ -351,4 +510,17 @@ class ResponseUser extends Model implements \Illuminate\Contracts\Auth\Authentic
     protected $table = 'users';
 
     public $timestamps = false;
+}
+
+class TokenResponseUser extends ResponseUser
+{
+    public function tokens(): MorphMany
+    {
+        return $this->morphMany(ResponseToken::class, 'tokenable');
+    }
+}
+
+class ResponseToken extends Model
+{
+    protected $table = 'personal_access_tokens';
 }

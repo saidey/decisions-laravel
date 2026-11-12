@@ -19,9 +19,7 @@ class SecurityResponse
         try {
             $state = app('cache')->store()->get(self::CACHE_KEY, []);
 
-            return array_values(array_filter($state['blocks'] ?? [], fn ($block) => is_array($block)
-                && is_string($block['value'] ?? null) && is_numeric($block['expires_at'] ?? null)
-                && $block['expires_at'] > now()->getTimestamp()));
+            return $this->validBlocks($state['blocks'] ?? []);
         } catch (Throwable) {
             return [];
         }
@@ -48,7 +46,7 @@ class SecurityResponse
                 return;
             }
             $cache->forever(self::CACHE_KEY, [
-                'blocks' => $payload['blocks'],
+                'blocks' => $this->validBlocks($payload['blocks']),
                 'fetched_at' => now()->getTimestamp(),
                 'refresh' => max(1, (int) ($payload['refresh'] ?? 60)),
             ]);
@@ -72,43 +70,79 @@ class SecurityResponse
         return ($state['fetched_at'] ?? 0) + max(1, (int) ($state['refresh'] ?? 60)) <= now()->getTimestamp();
     }
 
+    private function validBlocks(array $blocks): array
+    {
+        return array_values(array_filter($blocks, function ($block) {
+            if (! is_array($block) || ! is_string($block['value'] ?? null)
+                || ! is_numeric($block['expires_at'] ?? null) || $block['expires_at'] <= now()->getTimestamp()) {
+                return false;
+            }
+            [$network, $prefix] = array_pad(explode('/', $block['value'], 2), 2, null);
+            if (filter_var($network, FILTER_VALIDATE_IP) === false) {
+                return false;
+            }
+            $ipv6 = str_contains($network, ':');
+
+            return $prefix === null || (ctype_digit($prefix)
+                && (int) $prefix >= ($ipv6 ? 32 : 16) && (int) $prefix <= ($ipv6 ? 128 : 32));
+        }));
+    }
+
     private function command(mixed $command, mixed $cache): void
     {
         if (! is_array($command) || ! is_string($command['id'] ?? null) || ! Str::isUuid($command['id'])) {
             return;
         }
         $id = $command['id'];
+        $key = 'decisions:security:command:'.$id;
+        $cached = $cache->get($key);
+        if (is_array($cached)) {
+            $this->transport->acknowledgeSecurityCommand($id, $cached['status'], $cached['result']);
+
+            return;
+        }
         // Reserve before side effects so retries cannot execute the same action twice.
-        if (! $cache->add('decisions:security:command:'.$id, true, 86400)) {
+        if (! $cache->add($key, true, 900)) {
             return;
         }
         $status = 'failed';
         $result = 'unsupported';
         try {
-            if (! is_numeric($command['issued_at'] ?? null) || $command['issued_at'] < now()->getTimestamp() - 600) {
+            if (! is_numeric($command['issued_at'] ?? null) || $command['issued_at'] <= now()->getTimestamp() - 600) {
                 $result = 'stale';
             } elseif (in_array($command['type'] ?? null, ['logout_user', 'disable_user'], true)) {
                 if (! is_string($command['user'] ?? null) || $command['user'] === '') {
                     throw new RuntimeException('Invalid user.');
                 }
-                if ($command['type'] === 'logout_user') {
-                    $this->logout($command['user']);
+                $handler = config('decisions.security.handlers.disable_user');
+                if ($command['type'] === 'disable_user' && $handler === null) {
+                    $result = 'disable_user handler not configured';
                 } else {
-                    $handler = config('decisions.security.handlers.disable_user');
-                    if ($handler === null) {
-                        $this->transport->acknowledgeSecurityCommand($id, 'failed', 'disable_user handler not configured');
-
-                        return;
+                    $this->revokeTokens($command['user']);
+                    if ($command['type'] === 'logout_user') {
+                        $this->logout($command['user']);
+                    } else {
+                        $this->handler($handler, $command['user']);
                     }
-                    $this->handler($handler, $command['user']);
+                    $status = 'done';
+                    $result = 'done';
                 }
-                $status = 'done';
-                $result = 'done';
             }
         } catch (Throwable) {
             $result = 'command failed';
         }
+        $cache->put($key, ['status' => $status, 'result' => $result], 900);
         $this->transport->acknowledgeSecurityCommand($id, $status, $result);
+    }
+
+    private function revokeTokens(string $userId): void
+    {
+        $provider = config('auth.guards.'.config('auth.defaults.guard').'.provider');
+        $model = config('auth.providers.'.$provider.'.model');
+        if (is_string($model) && class_exists($model) && method_exists($model, 'tokens')) {
+            $user = (new $model)->newQuery()->find($userId);
+            $user?->tokens()->delete();
+        }
     }
 
     private function logout(string $userId): void

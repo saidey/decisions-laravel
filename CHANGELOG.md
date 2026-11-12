@@ -3,8 +3,9 @@
 ## 0.3.0 (unreleased)
 
 - Add opt-in cached IPv4/IPv6 and CIDR blocking before other global middleware, with minute scheduling and locked refresh after responses.
-- Pull approved response commands using the environment token; acknowledge stale, unsupported, failed and completed actions, and remember command IDs for 24 hours.
-- Support database-session logout, remember-token rotation, and application logout/disable handlers.
+- Drop invalid block entries and IPv4 CIDRs broader than /16 or IPv6 CIDRs broader than /32 while retaining valid feed entries.
+- Pull approved response commands using the environment token; reject commands aged 600 seconds or more and acknowledge stale, unsupported, failed and completed actions. Cache command results for 15 minutes and resend acknowledgements for repeated IDs without executing again.
+- Support database-session logout, remember-token rotation, and application logout/disable handlers. Revoke tokens through the configured user model's `tokens()` relation for both logout and disable commands when available.
 
 ## 0.2.4
 
