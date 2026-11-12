@@ -29,7 +29,7 @@ Optional configuration:
 | `DECISIONS_CAPTURE_CACHE_KEYS` | `false` | Capture scrubbed cache keys instead of hashed keys; session keys remain hashed. |
 | `DECISIONS_SECURITY_CAPTURE` | `false` | Enable security signals, hourly posture, and request IP/user agent capture. |
 | `DECISIONS_SECURITY_ENFORCE` | `false` | Enable cached IP blocking and approved response commands. |
-| `DECISIONS_SECURITY_IP_HEADER` | Unset | Trusted platform header to use for enforcement IPs; otherwise use `$request->ip()`. |
+| `DECISIONS_SECURITY_IP_HEADER` | Unset | Trusted edge headers, comma-separated and tried in order, for captured and enforced IPs; otherwise `$request->ip()`. |
 
 Publish the configuration to adjust privacy, buffer size, sampling, and ignore lists:
 
@@ -87,7 +87,7 @@ Exception source context is opt-in (`capture.source=false` by default; set `DECI
 
 Enforcement is independently opt-in with `DECISIONS_SECURITY_ENFORCE=true`. It prepends `DecisionsAi\Laravel\Http\BlockList` to the global middleware stack before sessions and auth. Exact IPv4/IPv6 addresses and CIDRs are checked only against the default configured cache store. Invalid entries, IPv4 ranges broader than /16, and IPv6 ranges broader than /32 are dropped while valid feed entries are retained. Expired blocks are ignored, and cache failures allow requests through. Blocked requests return plain-text `403 Forbidden` without running later middleware, setting session cookies, or recording request/security events. Use a shared non-database cache with lock support, such as Redis, to keep checks free of database access; a database-backed cache itself queries the database.
 
-Apps on DigitalOcean App Platform must set `DECISIONS_SECURITY_IP_HEADER=do-connecting-ip`. Configure a header only when your platform overwrites it with a trusted client IP. Enforcement validates the trimmed first value and falls back to `$request->ip()` if it is invalid; arbitrary headers are ignored by default. This middleware runs before Laravel's proxy middleware, so configure the platform header when needed.
+Apps on DigitalOcean App Platform must set `DECISIONS_SECURITY_IP_HEADER=do-connecting-ip`; behind Cloudflare as well, use `cf-connecting-ip,do-connecting-ip` and lock the origin to Cloudflare, or a client that reaches the origin directly can send its own `cf-connecting-ip`. Configure a header only when your platform overwrites it with a trusted client IP. Captured security events, request records and enforcement all use the same IP. Each header's trimmed first value is validated; the next header, then `$request->ip()`, is used if it is invalid; arbitrary headers are ignored by default. This middleware runs before Laravel's proxy middleware, so configure the platform header when needed.
 
 The client pulls `GET /ingest/v1/security` and acknowledges commands through `POST /ingest/v1/security/commands/{id}` using `DECISIONS_URL`, the environment bearer token, and the same one-second connection/total timeouts as ingest. There is no inbound command endpoint. Run Laravel's scheduler for minute refreshes; request termination also refreshes stale data after the response is sent. Refresh defaults to 60 seconds and honors the server's `refresh` interval. A cache lock prevents concurrent refreshes. Fetch failures keep the previous list, whose entries remain subject to their server-supplied `expires_at` timestamps (normally 24 hours).
 

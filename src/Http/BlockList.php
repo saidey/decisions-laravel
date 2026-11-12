@@ -4,6 +4,7 @@ namespace DecisionsAi\Laravel\Http;
 
 use Closure;
 use DecisionsAi\Laravel\SecurityResponse;
+use DecisionsAi\Laravel\Sensors\Security;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
@@ -16,14 +17,7 @@ class BlockList
     {
         try {
             if (config('decisions.security.enforce', false)) {
-                $ip = $request->ip();
-                $header = config('decisions.security.ip_header');
-                if (is_string($header) && $header !== '') {
-                    $candidate = trim(explode(',', (string) $request->headers->get($header))[0]);
-                    if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                        $ip = $candidate;
-                    }
-                }
+                $ip = Security::clientIp($request);
                 foreach ($this->security->blocks() as $block) {
                     if (is_string($ip) && $this->matches($ip, $block['value'])) {
                         $request->attributes->set('decisions.blocked', true);

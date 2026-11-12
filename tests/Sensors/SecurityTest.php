@@ -159,6 +159,19 @@ class SecurityTest extends TestCase
         $this->assertSame('203.0.113.11', $this->records('request')[0]['ip']);
     }
 
+    public function test_captured_ip_comes_from_the_configured_edge_headers_in_order(): void
+    {
+        Route::get('/denied', fn () => response('', 403));
+        config(['decisions.security.ip_header' => 'cf-connecting-ip, do-connecting-ip']);
+        $server = ['REMOTE_ADDR' => '10.244.0.5', 'HTTP_DO_CONNECTING_IP' => '172.70.1.1'];
+        $this->withServerVariables($server + ['HTTP_CF_CONNECTING_IP' => '203.0.113.12'])->get('/denied')->assertForbidden();
+        $this->withServerVariables($server + ['HTTP_CF_CONNECTING_IP' => 'garbage'])->get('/denied')->assertForbidden();
+        $this->withServerVariables(['REMOTE_ADDR' => '10.244.0.5'])->get('/denied')->assertForbidden();
+
+        $this->assertSame(['203.0.113.12', '172.70.1.1', '10.244.0.5'], array_column($this->security('forbidden'), 'ip'));
+        $this->assertSame(['203.0.113.12', '172.70.1.1', '10.244.0.5'], array_column($this->records('request'), 'ip'));
+    }
+
     public function test_default_token_models_follow_sanctums_configured_model_after_boot(): void
     {
         config(['decisions.security.token_models' => null]);

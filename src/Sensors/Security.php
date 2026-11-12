@@ -72,9 +72,26 @@ class Security
         $request ??= app()->bound('request') ? app('request') : null;
 
         return [
-            'ip' => $request?->ip(),
+            'ip' => $request === null ? null : self::clientIp($request),
             'ua' => $request?->userAgent() === null ? null : mb_strcut($this->redactor->scrubValue($request->userAgent()), 0, 255, 'UTF-8'),
         ];
+    }
+
+    /**
+     * The visitor's IP: the first valid address from the headers named in
+     * security.ip_header (comma-separated, tried in order), else $request->ip().
+     * Only name headers your edge overwrites, or a client can choose its own IP.
+     */
+    public static function clientIp(Request $request): ?string
+    {
+        foreach (array_filter(array_map('trim', explode(',', (string) config('decisions.security.ip_header')))) as $header) {
+            $candidate = trim(explode(',', (string) $request->headers->get($header))[0]);
+            if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+                return $candidate;
+            }
+        }
+
+        return $request->ip();
     }
 
     public function auth(object $event, string $kind): void

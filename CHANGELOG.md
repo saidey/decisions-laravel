@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-11-12)
+
+- Captured security events and request records use the same client IP as enforcement. `DECISIONS_SECURITY_IP_HEADER` accepts a comma-separated list of trusted edge headers, tried in order, before `$request->ip()`.
+
 ## 0.3.0 (2026-11-12)
 
 - Redact identity-document payload fields and whole-token Maldivian national ID/passport values while retaining foreign-key IDs, UUIDs and invoice references.
